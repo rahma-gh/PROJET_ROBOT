@@ -45,7 +45,8 @@ COPY . .
 
 # ÉTAPE 2 & 3 : Lancement Headless et Tests
 # On augmente le sleep à 15s pour être sûr que la scène est chargée
-CMD xvfb-run --server-args='-screen 0 1024x768x24' /opt/coppelia/coppeliaSim -h -s /app/pick_and_place.ttt & \
+# On passe le chemin de la scène direct après l'exécutable, et -s avec un temps (ex: 60000ms = 1min)
+CMD xvfb-run --server-args='-screen 0 1024x768x24' /opt/coppelia/coppeliaSim -h /app/pick_and_place.ttt -s 60000 & \
     sleep 15 && \
     export PYTHONPATH=$PYTHONPATH:/app && \
     pytest --html=report.html --self-contained-html tests/
