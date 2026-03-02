@@ -45,9 +45,7 @@ RUN pip3 install --no-cache-dir -r requirements.txt
 # Copie de tout le projet
 COPY . .
 
-# On lance CoppeliaSim en arrière-plan (&)
-# On attend 30 secondes pour charger la scène de 21Mo
-# On lance pytest et on récupère son code de sortie
+# On attend 30 secondes au lieu de 20
 CMD xvfb-run --server-args='-screen 0 1024x768x24' /opt/coppelia/coppeliaSim -h /app/pick_and_place.ttt & \
     sleep 30 && \
     export PYTHONPATH=$PYTHONPATH:/app && \
