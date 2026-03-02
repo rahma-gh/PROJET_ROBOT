@@ -1,0 +1,36 @@
+name: Pipeline CI/CD UR10 - Regression Suite
+
+on:
+  push:
+    branches: [ "develop", "main" ]
+  pull_request:
+    branches: [ "develop" ]
+
+jobs:
+  regression-tests:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 🐳 Build Docker Image
+        run: docker build -t ur10-simulation .
+
+      - name: 🤖 Run Simulator & Tests
+        run: |
+          mkdir -p output
+          # Le conteneur tourne, effectue les tests et s'arrête
+          docker run --name robot-container ur10-simulation || true
+
+      - name: 📊 Extract Test Report
+        if: always()
+        run: |
+          docker cp robot-container:/app/report.html ./output/report.html || echo "Report not found"
+
+      - name: 📁 Upload Artifact (Report)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: regression-report-html
+          path: output/report.html

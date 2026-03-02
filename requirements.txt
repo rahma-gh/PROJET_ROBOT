@@ -1,0 +1,8 @@
+numpy
+scipy
+pytest
+pytest-html
+pytest-cov
+pytest-xdist
+coppeliasim-zmqremoteapi-client
+matplotlib
