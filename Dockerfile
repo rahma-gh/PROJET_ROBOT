@@ -45,15 +45,13 @@ RUN pip3 install --no-cache-dir -r requirements.txt
 # Copie de tout le projet
 COPY . .
 
-# ÉTAPE 2 & 3 : Lancement Headless et Tests
-# On augmente le sleep à 15s pour être sûr que la scène est chargée
-# On passe le chemin de la scène direct après l'exécutable, et -s avec un temps (ex: 60000ms = 1min)
-# On utilise un script simple pour garder le simulateur actif pendant les tests
-# On vérifie si le fichier existe, puis on lance sans le -s (auto-start) pour tester
+# On lance CoppeliaSim en arrière-plan
+# On attend 30 secondes (ta scène fait 21Mo, c'est lourd à charger)
+# On lance les tests
 CMD xvfb-run --server-args='-screen 0 1024x768x24' /opt/coppelia/coppeliaSim -h /app/pick_and_place.ttt & \
-    for i in {1..30}; do if netstat -tulpn | grep -q 23000; then break; fi; echo "Attente du port ZMQ (23000)... $i"; sleep 2; done; \
+    sleep 30 && \
     export PYTHONPATH=$PYTHONPATH:/app && \
-    pytest --html=report.html --self-contained-html tests/; \
-    RESULT=$?; \
-    pkill -f coppeliaSim; \
-    exit $RESULT
+    pytest --html=report.html --self-contained-html tests/ ; \
+    EXIT_CODE=$? ; \
+    pkill -f coppeliaSim ; \
+    exit $EXIT_CODE
