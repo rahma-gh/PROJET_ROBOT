@@ -4,6 +4,7 @@ FROM ubuntu:22.04
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Installation des dépendances système (CORRIGÉ avec libglib2.0-0)
+# Installation des dépendances système (CORRIGÉ avec libsodium)
 RUN apt-get update && apt-get install -y \
     wget \
     xvfb \
@@ -11,6 +12,7 @@ RUN apt-get update && apt-get install -y \
     python3-pip \
     libx11-6 \
     libglib2.0-0 \
+    liblibsodium-dev \
     libxcb-icccm4 \
     libxcb-image0 \
     libxcb-keysyms1 \
