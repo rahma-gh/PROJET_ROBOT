@@ -49,8 +49,10 @@ COPY . .
 # On augmente le sleep à 15s pour être sûr que la scène est chargée
 # On passe le chemin de la scène direct après l'exécutable, et -s avec un temps (ex: 60000ms = 1min)
 # On utilise un script simple pour garder le simulateur actif pendant les tests
-CMD xvfb-run --server-args='-screen 0 1024x768x24' /opt/coppelia/coppeliaSim -h /app/pick_and_place.ttt -s 60000 & \
-    sleep 15 && \
+# On vérifie si le fichier existe, puis on lance sans le -s (auto-start) pour tester
+CMD ls -l /app/pick_and_place.ttt && \
+    xvfb-run --server-args='-screen 0 1024x768x24' /opt/coppelia/coppeliaSim -h /app/pick_and_place.ttt & \
+    sleep 20 && \
     export PYTHONPATH=$PYTHONPATH:/app && \
     pytest --html=report.html --self-contained-html tests/ ; \
     pkill -f coppeliaSim
