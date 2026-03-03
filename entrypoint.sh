@@ -36,6 +36,7 @@ echo "Simulator ready."
 
 echo "=== Running Tests ==="
 
+export PYTHONPATH=/app
 pytest tests/ --html=report.html --self-contained-html
 TEST_EXIT_CODE=$?
 
