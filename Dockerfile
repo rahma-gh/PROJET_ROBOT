@@ -52,4 +52,4 @@ CMD xvfb-run --server-args='-screen 0 1024x768x24' /opt/coppelia/coppeliaSim -h 
     pytest --html=report.html --self-contained-html tests/ ; \
     EXIT_CODE=$? ; \
     pkill -f coppeliaSim ; \
-    exit $EXIT_CODE
+    exit $EXIT_CODE         
