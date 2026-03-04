@@ -1,6 +1,8 @@
+import os
 import pytest
 import time
 from coppeliasim_zmqremoteapi_client import RemoteAPIClient
+from lib.ArmRobot import UniversalRobot   # add this
 
 
 @pytest.fixture(scope="session")
