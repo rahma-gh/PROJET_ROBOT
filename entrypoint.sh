@@ -13,10 +13,10 @@ xvfb-run --auto-servernum --server-args='-screen 0 1024x768x24' \
   /opt/coppelia/coppeliaSim \
     -h \
     -q \
-    -s000000.05 \
+    -s \
     -GzmqRemoteApi.rpcPort=23000 \
     -GzmqRemoteApi.cntPort=23001 \
-    -g /app/start_zmq.lua \               # ← charge notre script Lua au démarrage
+    -a "ZMQ remote API server" \
     /app/pick_and_place.ttt > coppeliasim.log 2>&1 &
 
 COPPELIA_PID=$!
