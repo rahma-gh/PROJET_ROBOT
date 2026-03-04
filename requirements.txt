@@ -1,6 +1,7 @@
 numpy
 scipy
 pytest
+pytest-timeout
 pytest-html
 pytest-cov
 pytest-xdist
