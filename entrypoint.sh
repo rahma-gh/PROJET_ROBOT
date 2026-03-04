@@ -14,9 +14,9 @@ xvfb-run --auto-servernum --server-args='-screen 0 1024x768x24' \
     -h \
     -q \
     -s \
+    -c "return simRemoteApi.start(23000,1,true,false)" \
     -GzmqRemoteApi.rpcPort=23000 \
     -GzmqRemoteApi.cntPort=23001 \
-    -a "ZMQ remote API server" \
     /app/pick_and_place.ttt > coppeliasim.log 2>&1 &
 
 COPPELIA_PID=$!
