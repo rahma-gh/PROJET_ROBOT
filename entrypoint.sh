@@ -49,6 +49,27 @@ fi
 echo "Simulator ZMQ server is ready (port 23000 open)."
 sleep 5   # give the scene time to load
 
+echo "=== CoppeliaSim startup log (first 50 lines) ==="
+tail -n 50 coppeliasim.log
+
+echo "=== Testing connection to ZMQ server ==="
+python3 -c "
+from coppeliasim_zmqremoteapi_client import RemoteAPIClient
+import sys
+try:
+    client = RemoteAPIClient()
+    sim = client.require('sim')
+    print('✅ Connection successful')
+except Exception as e:
+    print(f'❌ Connection failed: {e}')
+    sys.exit(1)
+"
+if [ $? -ne 0 ]; then
+    echo "Connection test failed, aborting."
+    kill -TERM $COPPELIA_PID 2>/dev/null || true
+    exit 1
+fi
+
 echo "=== Running pytest ==="
 
 export PYTHONPATH=/app
