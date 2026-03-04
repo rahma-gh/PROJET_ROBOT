@@ -52,20 +52,23 @@ sleep 5   # give the scene time to load
 echo "=== CoppeliaSim startup log (first 50 lines) ==="
 tail -n 50 coppeliasim.log
 
-echo "=== Testing connection to ZMQ server ==="
-python3 -c "
+echo "=== Testing port 23000 with netcat ==="
+timeout 2 nc -zv localhost 23000 || echo "⚠️ netcat: port 23000 not reachable"
+
+echo "=== Testing connection to ZMQ server (with 5s timeout) ==="
+if ! timeout 5 python3 -c "
 from coppeliasim_zmqremoteapi_client import RemoteAPIClient
 import sys
 try:
     client = RemoteAPIClient()
+    print('Connecting...')
     sim = client.require('sim')
     print('✅ Connection successful')
 except Exception as e:
     print(f'❌ Connection failed: {e}')
     sys.exit(1)
-"
-if [ $? -ne 0 ]; then
-    echo "Connection test failed, aborting."
+"; then
+    echo "❌ Connection test failed or timed out, aborting."
     kill -TERM $COPPELIA_PID 2>/dev/null || true
     exit 1
 fi
