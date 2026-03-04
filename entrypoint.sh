@@ -12,7 +12,6 @@ echo "=== Starting CoppeliaSim (headless mode) ==="
 xvfb-run --auto-servernum --server-args='-screen 0 1024x768x24' \
   /opt/coppelia/coppeliaSim \
     -h \
-    -q \
     -G zmqRemoteApi.rpcPort=23000 \
     -G zmqRemoteApi.cntPort=23001 \
     /app/pick_and_place.ttt > coppeliasim.log 2>&1 &
@@ -48,6 +47,7 @@ if [ $ELAPSED -ge $TIMEOUT ]; then
 fi
 
 echo "Simulator ZMQ server is ready (port 23000 open)."
+sleep 5   # give the scene time to load
 
 echo "=== Running pytest ==="
 
@@ -58,7 +58,8 @@ pytest tests/ \
     --self-contained-html \
     --timeout=180 \
     --timeout-method=thread \
-    -vv || true
+    -vv \
+    -s || true
 
 TEST_EXIT_CODE=$?
 
