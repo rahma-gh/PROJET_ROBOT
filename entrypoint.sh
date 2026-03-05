@@ -55,8 +55,8 @@ from coppeliasim_zmqremoteapi_client import RemoteAPIClient
 try:
     c = RemoteAPIClient(host='localhost', port=23000)
     s = c.require('sim')
-    state = s.getSimulatorState()
-    print(f"ZMQ API ready — simulator state: {state}")
+    state = s.getSimulationState()
+    print(f"ZMQ API ready — simulation state: {state}")
     sys.exit(0)
 except Exception as e:
     print(f"Not ready: {type(e).__name__}: {e}", file=sys.stderr)
