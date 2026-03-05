@@ -42,14 +42,13 @@ if [ $ELAPSED -ge $TIMEOUT ]; then
     exit 1
 fi
 
-echo "Port 23000 is open. Probing ZMQ API..."
+echo "Port 23000 is open. Probing ZMQ API and starting simulation..."
 
-# Step 2: Write the probe to a file so the process exits cleanly (no timeout kill)
-# and always closes the ZMQ socket with linger=0 before exiting.
-# A killed process (via `timeout 5s`) leaves the REQ socket half-open on the
-# server side, which blocks the next RemoteAPIClient connection indefinitely.
+# Step 2: Probe AND start the simulation so CoppeliaSim is already running
+# when pytest creates its own client. When stopped (state=0), CoppeliaSim
+# can queue or drop subsequent ZMQ requests depending on the version.
 cat > /tmp/zmq_probe.py << 'PYEOF'
-import sys
+import sys, time
 from coppeliasim_zmqremoteapi_client import RemoteAPIClient
 
 c = None
@@ -58,7 +57,18 @@ try:
     c = RemoteAPIClient(host='localhost', port=23000)
     s = c.require('sim')
     state = s.getSimulationState()
-    print(f"ZMQ API ready — simulation state: {state}")
+    print(f"Connected — simulation state: {state}")
+
+    # Start the simulation here so it is already RUNNING when pytest connects.
+    # The sim fixture will call startSimulation() again which is harmless
+    # (it is a no-op if already running).
+    if state == 0:
+        print("Starting simulation from entrypoint probe...")
+        s.startSimulation()
+        time.sleep(2.0)
+        state = s.getSimulationState()
+        print(f"Simulation state after start: {state}")
+
     rc = 0
 except Exception as e:
     print(f"Not ready: {type(e).__name__}: {e}", file=sys.stderr)
@@ -81,16 +91,14 @@ until python3 /tmp/zmq_probe.py; do
     echo "  ZMQ not ready yet... (${PROBE_ELAPSED}s / ${PROBE_TIMEOUT}s)"
     if [ $PROBE_ELAPSED -ge $PROBE_TIMEOUT ]; then
         echo "ERROR: ZMQ Remote API did not respond after ${PROBE_TIMEOUT}s"
-        echo ""
-        echo "Last 40 lines of coppeliasim.log:"
         tail -n 40 coppeliasim.log
         kill -TERM $COPPELIA_PID 2>/dev/null || true
         exit 1
     fi
 done
 
-echo "ZMQ Remote API is ready and responding."
-sleep 2
+echo "ZMQ Remote API is ready and simulation is running."
+sleep 1
 
 echo "=== Running pytest ==="
 

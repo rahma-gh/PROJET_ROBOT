@@ -8,20 +8,25 @@ from lib.ArmRobot import UniversalRobot
 @pytest.fixture(scope="module")
 def sim():
     """
-    Create a fresh RemoteAPIClient per module.
-    Do NOT use a session-scoped client — ZMQ REQ sockets are stateful and
-    a single shared client causes recv() deadlocks across fixtures.
+    Connect to the already-running CoppeliaSim instance.
+    The simulation is started by entrypoint.sh before pytest runs,
+    so we only call startSimulation() if somehow it stopped.
     """
     client = RemoteAPIClient(host='localhost', port=23000)
     sim = client.require('sim')
-    print("→ Démarrage de la simulation CoppeliaSim...")
-    sim.startSimulation()
-    time.sleep(2.0)
+
+    state = sim.getSimulationState()
+    print(f"→ Simulation state at fixture setup: {state}")
+    if state == 0:
+        print("→ Simulation not running — starting it now...")
+        sim.startSimulation()
+        time.sleep(2.0)
+
     yield sim
+
     print("→ Arrêt de la simulation CoppeliaSim...")
     sim.stopSimulation()
     time.sleep(0.5)
-    # Explicitly release the ZMQ socket
     try:
         client.socket.close(linger=0)
         client.context.term()
