@@ -9,10 +9,11 @@ chmod 0700 "$XDG_RUNTIME_DIR"
 
 echo "=== Starting CoppeliaSim (headless mode) ==="
 
+# Note: no -q flag — it causes CoppeliaSim to exit immediately after loading
+# the scene without waiting for the simulation to run.
 xvfb-run --auto-servernum --server-args='-screen 0 1024x768x24' \
   /opt/coppelia/coppeliaSim \
     -h \
-    -q \
     -G zmqRemoteApi.rpcPort=23000 \
     -G zmqRemoteApi.cntPort=23001 \
     /app/pick_and_place.ttt > coppeliasim.log 2>&1 &
@@ -28,32 +29,23 @@ TIMEOUT=120
 INTERVAL=2
 ELAPSED=0
 
-# Wait for the ZMQ server log message — no Python probe needed.
-# Opening a RemoteAPIClient connection and then closing it corrupts the
-# REQ/REP state on the server side for the next caller.
-# Instead we watch the CoppeliaSim log for the line it prints when the
-# ZMQ remote API server is fully initialised and ready to accept clients.
-until grep -q "ZeroMQ remote API server" coppeliasim.log 2>/dev/null \
-   || grep -q "zmqRemoteApi" coppeliasim.log 2>/dev/null \
-   || grep -q "Remote API" coppeliasim.log 2>/dev/null \
+# Watch for the exact log line CoppeliaSim prints when the ZMQ addon is loaded
+until grep -q "ZMQ remote API server" coppeliasim.log 2>/dev/null \
    || [ $ELAPSED -ge $TIMEOUT ]; do
     sleep $INTERVAL
     ELAPSED=$((ELAPSED + INTERVAL))
-    echo "  waiting for ZMQ ready log line... (${ELAPSED}s / ${TIMEOUT}s)"
-    # Show last log line for visibility
+    echo "  waiting... (${ELAPSED}s / ${TIMEOUT}s)"
     tail -n 1 coppeliasim.log 2>/dev/null || true
 done
 
 if [ $ELAPSED -ge $TIMEOUT ]; then
-    echo "ERROR: CoppeliaSim ZMQ server did not signal readiness after ${TIMEOUT}s"
+    echo "ERROR: ZMQ remote API server did not appear in log after ${TIMEOUT}s"
     tail -n 40 coppeliasim.log
     kill -TERM $COPPELIA_PID 2>/dev/null || true
     exit 1
 fi
 
-echo "CoppeliaSim ZMQ server is ready (detected in log)."
-
-# Extra wait for scene objects to be fully loaded
+echo "CoppeliaSim ZMQ server addon loaded. Waiting for scene to settle..."
 sleep 3
 
 echo "=== Running pytest ==="
