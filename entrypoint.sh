@@ -42,27 +42,40 @@ if [ $ELAPSED -ge $TIMEOUT ]; then
     exit 1
 fi
 
-echo "Port 23000 is open. Probing ZMQ API with per-attempt timeout..."
+echo "Port 23000 is open. Probing ZMQ API..."
 
-# Step 2: Probe using raw zmq with RCVTIMEO so each attempt fails fast
-# (RemoteAPIClient has no built-in timeout and will hang if the scene is loading)
-PROBE_TIMEOUT=120
-PROBE_ELAPSED=0
-
-until timeout 5s python3 - <<'PYEOF' && break
+# Step 2: Write the probe to a file so the process exits cleanly (no timeout kill)
+# and always closes the ZMQ socket with linger=0 before exiting.
+# A killed process (via `timeout 5s`) leaves the REQ socket half-open on the
+# server side, which blocks the next RemoteAPIClient connection indefinitely.
+cat > /tmp/zmq_probe.py << 'PYEOF'
 import sys
 from coppeliasim_zmqremoteapi_client import RemoteAPIClient
+
+c = None
+rc = 1
 try:
     c = RemoteAPIClient(host='localhost', port=23000)
     s = c.require('sim')
     state = s.getSimulationState()
     print(f"ZMQ API ready — simulation state: {state}")
-    sys.exit(0)
+    rc = 0
 except Exception as e:
     print(f"Not ready: {type(e).__name__}: {e}", file=sys.stderr)
-    sys.exit(1)
+    rc = 1
+finally:
+    try:
+        c.socket.close(linger=0)
+        c.context.term()
+    except Exception:
+        pass
+sys.exit(rc)
 PYEOF
-do
+
+PROBE_TIMEOUT=120
+PROBE_ELAPSED=0
+
+until python3 /tmp/zmq_probe.py; do
     sleep $INTERVAL
     PROBE_ELAPSED=$((PROBE_ELAPSED + INTERVAL))
     echo "  ZMQ not ready yet... (${PROBE_ELAPSED}s / ${PROBE_TIMEOUT}s)"
@@ -77,14 +90,12 @@ do
 done
 
 echo "ZMQ Remote API is ready and responding."
-# Small buffer for scene objects to fully register after API is up
 sleep 2
 
 echo "=== Running pytest ==="
 
 export PYTHONPATH=/app
 
-# Determine test location: prefer tests/ subdirectory, fall back to root
 if [ -d "/app/tests" ]; then
     TEST_PATH="tests/"
 else
