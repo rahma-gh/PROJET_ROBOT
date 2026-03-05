@@ -42,41 +42,58 @@ if [ $ELAPSED -ge $TIMEOUT ]; then
     exit 1
 fi
 
-echo "Port 23000 is open. Waiting for ZMQ API to accept connections..."
+echo "Port 23000 is open. Probing ZMQ API with per-attempt timeout..."
 
-# Step 2: Probe the ZMQ API with an actual Python handshake
-# This is the real readiness check — the port opens before the scene is fully loaded
-PROBE_TIMEOUT=60
+# Step 2: Probe using raw zmq with RCVTIMEO so each attempt fails fast
+# (RemoteAPIClient has no built-in timeout and will hang if the scene is loading)
+PROBE_TIMEOUT=120
 PROBE_ELAPSED=0
 
-until python3 -c "
-from coppeliasim_zmqremoteapi_client import RemoteAPIClient
-import sys
+until python3 - <<'PYEOF' && break
+import sys, zmq, json, uuid
+
+ctx = zmq.Context()
+sock = ctx.socket(zmq.REQ)
+sock.setsockopt(zmq.RCVTIMEO, 3000)   # 3 s receive timeout
+sock.setsockopt(zmq.SNDTIMEO, 3000)   # 3 s send timeout
+sock.setsockopt(zmq.LINGER, 0)
+sock.connect("tcp://localhost:23000")
 try:
-    c = RemoteAPIClient(host='localhost', port=23000)
-    s = c.require('sim')
-    v = s.getSimulatorState()
-    print(f'CoppeliaSim state: {v}')
-    sys.exit(0)
-except Exception as e:
-    print(f'Not ready yet: {e}', file=sys.stderr)
+    req = json.dumps({"func": "zmqRemoteApi.require", "args": ["sim"],
+                      "id": str(uuid.uuid4())}).encode()
+    sock.send(req)
+    rep = json.loads(sock.recv())
+    if "error" not in rep:
+        print(f"ZMQ API ready: {list(rep.keys())}")
+        sys.exit(0)
+    print(f"ZMQ error: {rep.get('error')}", file=sys.stderr)
     sys.exit(1)
-" 2>/dev/null || [ $PROBE_ELAPSED -ge $PROBE_TIMEOUT ]; do
+except zmq.Again:
+    print("ZMQ: no response within 3s (scene still loading)", file=sys.stderr)
+    sys.exit(1)
+except Exception as e:
+    print(f"ZMQ probe exception: {e}", file=sys.stderr)
+    sys.exit(1)
+finally:
+    sock.close(); ctx.term()
+PYEOF
+do
     sleep $INTERVAL
     PROBE_ELAPSED=$((PROBE_ELAPSED + INTERVAL))
-    echo "  ZMQ not responding yet... (${PROBE_ELAPSED}s / ${PROBE_TIMEOUT}s)"
+    echo "  ZMQ not ready yet... (${PROBE_ELAPSED}s / ${PROBE_TIMEOUT}s)"
+    if [ $PROBE_ELAPSED -ge $PROBE_TIMEOUT ]; then
+        echo "ERROR: ZMQ Remote API did not respond after ${PROBE_TIMEOUT}s"
+        echo ""
+        echo "Last 40 lines of coppeliasim.log:"
+        tail -n 40 coppeliasim.log
+        kill -TERM $COPPELIA_PID 2>/dev/null || true
+        exit 1
+    fi
 done
 
-if [ $PROBE_ELAPSED -ge $PROBE_TIMEOUT ]; then
-    echo "ERROR: ZMQ Remote API did not respond after ${PROBE_TIMEOUT}s"
-    echo ""
-    echo "Last 40 lines of coppeliasim.log:"
-    tail -n 40 coppeliasim.log
-    kill -TERM $COPPELIA_PID 2>/dev/null || true
-    exit 1
-fi
-
 echo "ZMQ Remote API is ready and responding."
+# Small buffer for scene objects to fully register after API is up
+sleep 2
 
 echo "=== Running pytest ==="
 
