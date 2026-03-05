@@ -49,45 +49,18 @@ echo "Port 23000 is open. Probing ZMQ API with per-attempt timeout..."
 PROBE_TIMEOUT=120
 PROBE_ELAPSED=0
 
-until python3 - <<'PYEOF' && break
-import sys, zmq, uuid
-
-# CoppeliaSim ZMQ Remote API v4.6 uses MessagePack, not JSON
+until timeout 5s python3 - <<'PYEOF' && break
+import sys
+from coppeliasim_zmqremoteapi_client import RemoteAPIClient
 try:
-    import msgpack
-except ImportError:
-    # msgpack ships with coppeliasim-zmqremoteapi-client; try the bundled one
-    import coppeliasim_zmqremoteapi_client.msgpack as msgpack
-
-ctx = zmq.Context()
-sock = ctx.socket(zmq.REQ)
-sock.setsockopt(zmq.RCVTIMEO, 4000)   # 4 s receive timeout
-sock.setsockopt(zmq.SNDTIMEO, 4000)   # 4 s send timeout
-sock.setsockopt(zmq.LINGER, 0)
-# Fresh connect every attempt — REQ socket is stateful, reuse after failure hangs
-sock.connect("tcp://localhost:23000")
-try:
-    req = msgpack.packb({"func": "zmqRemoteApi.require",
-                         "args": ["sim"],
-                         "id": str(uuid.uuid4())},
-                        use_bin_type=True)
-    sock.send(req)
-    raw = sock.recv()
-    rep = msgpack.unpackb(raw, raw=False)
-    if "error" not in rep:
-        print(f"ZMQ API ready — keys: {list(rep.keys())}")
-        sys.exit(0)
-    print(f"ZMQ returned error: {rep.get('error')}", file=sys.stderr)
-    sys.exit(1)
-except zmq.Again:
-    print("ZMQ: no response within 4s (scene still loading)", file=sys.stderr)
-    sys.exit(1)
+    c = RemoteAPIClient(host='localhost', port=23000)
+    s = c.require('sim')
+    state = s.getSimulatorState()
+    print(f"ZMQ API ready — simulator state: {state}")
+    sys.exit(0)
 except Exception as e:
-    print(f"ZMQ probe exception: {type(e).__name__}: {e}", file=sys.stderr)
+    print(f"Not ready: {type(e).__name__}: {e}", file=sys.stderr)
     sys.exit(1)
-finally:
-    sock.close()
-    ctx.term()
 PYEOF
 do
     sleep $INTERVAL

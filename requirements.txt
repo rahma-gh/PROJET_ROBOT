@@ -6,4 +6,5 @@ pytest-html
 pytest-cov
 pytest-xdist
 coppeliasim-zmqremoteapi-client
+msgpack
 matplotlib
