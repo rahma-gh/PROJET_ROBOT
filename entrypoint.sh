@@ -28,77 +28,33 @@ TIMEOUT=120
 INTERVAL=2
 ELAPSED=0
 
-# Step 1: Wait for the port to open
-until netstat -tuln 2>/dev/null | grep -q ":23000" || [ $ELAPSED -ge $TIMEOUT ]; do
+# Wait for the ZMQ server log message — no Python probe needed.
+# Opening a RemoteAPIClient connection and then closing it corrupts the
+# REQ/REP state on the server side for the next caller.
+# Instead we watch the CoppeliaSim log for the line it prints when the
+# ZMQ remote API server is fully initialised and ready to accept clients.
+until grep -q "ZeroMQ remote API server" coppeliasim.log 2>/dev/null \
+   || grep -q "zmqRemoteApi" coppeliasim.log 2>/dev/null \
+   || grep -q "Remote API" coppeliasim.log 2>/dev/null \
+   || [ $ELAPSED -ge $TIMEOUT ]; do
     sleep $INTERVAL
     ELAPSED=$((ELAPSED + INTERVAL))
-    echo "  waiting for port... (${ELAPSED}s / ${TIMEOUT}s)"
+    echo "  waiting for ZMQ ready log line... (${ELAPSED}s / ${TIMEOUT}s)"
+    # Show last log line for visibility
+    tail -n 1 coppeliasim.log 2>/dev/null || true
 done
 
 if [ $ELAPSED -ge $TIMEOUT ]; then
-    echo "ERROR: CoppeliaSim ZMQ port 23000 did not open after ${TIMEOUT}s"
+    echo "ERROR: CoppeliaSim ZMQ server did not signal readiness after ${TIMEOUT}s"
     tail -n 40 coppeliasim.log
     kill -TERM $COPPELIA_PID 2>/dev/null || true
     exit 1
 fi
 
-echo "Port 23000 is open. Probing ZMQ API and starting simulation..."
+echo "CoppeliaSim ZMQ server is ready (detected in log)."
 
-# Step 2: Probe AND start the simulation so CoppeliaSim is already running
-# when pytest creates its own client. When stopped (state=0), CoppeliaSim
-# can queue or drop subsequent ZMQ requests depending on the version.
-cat > /tmp/zmq_probe.py << 'PYEOF'
-import sys, time
-from coppeliasim_zmqremoteapi_client import RemoteAPIClient
-
-c = None
-rc = 1
-try:
-    c = RemoteAPIClient(host='localhost', port=23000)
-    s = c.require('sim')
-    state = s.getSimulationState()
-    print(f"Connected — simulation state: {state}")
-
-    # Start the simulation here so it is already RUNNING when pytest connects.
-    # The sim fixture will call startSimulation() again which is harmless
-    # (it is a no-op if already running).
-    if state == 0:
-        print("Starting simulation from entrypoint probe...")
-        s.startSimulation()
-        time.sleep(2.0)
-        state = s.getSimulationState()
-        print(f"Simulation state after start: {state}")
-
-    rc = 0
-except Exception as e:
-    print(f"Not ready: {type(e).__name__}: {e}", file=sys.stderr)
-    rc = 1
-finally:
-    try:
-        c.socket.close(linger=0)
-        c.context.term()
-    except Exception:
-        pass
-sys.exit(rc)
-PYEOF
-
-PROBE_TIMEOUT=120
-PROBE_ELAPSED=0
-
-until python3 /tmp/zmq_probe.py; do
-    sleep $INTERVAL
-    PROBE_ELAPSED=$((PROBE_ELAPSED + INTERVAL))
-    echo "  ZMQ not ready yet... (${PROBE_ELAPSED}s / ${PROBE_TIMEOUT}s)"
-    if [ $PROBE_ELAPSED -ge $PROBE_TIMEOUT ]; then
-        echo "ERROR: ZMQ Remote API did not respond after ${PROBE_TIMEOUT}s"
-        tail -n 40 coppeliasim.log
-        kill -TERM $COPPELIA_PID 2>/dev/null || true
-        exit 1
-    fi
-done
-
-echo "ZMQ Remote API is ready and simulation is running."
-sleep 1
+# Extra wait for scene objects to be fully loaded
+sleep 3
 
 echo "=== Running pytest ==="
 
