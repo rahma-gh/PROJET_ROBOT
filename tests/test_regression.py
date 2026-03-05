@@ -5,25 +5,28 @@ from coppeliasim_zmqremoteapi_client import RemoteAPIClient
 from lib.ArmRobot import UniversalRobot
 
 
-@pytest.fixture(scope="session")
-def remote_api_client():
-    """Single ZMQ client reused across the whole test session."""
-    client = RemoteAPIClient(host='localhost', port=23000)
-    yield client
-
-
 @pytest.fixture(scope="module")
-def sim(remote_api_client):
-    """Obtain the sim object and start the simulation once per module."""
-    sim = remote_api_client.require('sim')
+def sim():
+    """
+    Create a fresh RemoteAPIClient per module.
+    Do NOT use a session-scoped client — ZMQ REQ sockets are stateful and
+    a single shared client causes recv() deadlocks across fixtures.
+    """
+    client = RemoteAPIClient(host='localhost', port=23000)
+    sim = client.require('sim')
     print("→ Démarrage de la simulation CoppeliaSim...")
     sim.startSimulation()
-    # Give the simulation a moment to settle before tests run
     time.sleep(2.0)
     yield sim
     print("→ Arrêt de la simulation CoppeliaSim...")
     sim.stopSimulation()
     time.sleep(0.5)
+    # Explicitly release the ZMQ socket
+    try:
+        client.socket.close(linger=0)
+        client.context.term()
+    except Exception:
+        pass
 
 
 # ── Tests ────────────────────────────────────────────────────────────────────
