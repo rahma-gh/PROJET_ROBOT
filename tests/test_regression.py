@@ -7,20 +7,8 @@ from lib.ArmRobot import UniversalRobot
 
 @pytest.fixture(scope="module")
 def sim():
-    # the CoppeliaSim ZMQ server can take a while to spin up in CI
     client = RemoteAPIClient(host='localhost', port=23000)
-    sim = None
-    for attempt in range(60):  # wait up to about a minute
-        try:
-            sim = client.require('sim')
-            break
-        except Exception as exc:
-            # remote api not ready yet, sleep and retry
-            print(f"waiting for CoppeliaSim ({attempt+1}/60): {exc}")
-            time.sleep(1.0)
-    if sim is None:
-        pytest.fail("could not connect to CoppeliaSim ZMQ server on localhost:23000")
-
+    sim = client.require('sim')
     print("→ Démarrage de la simulation CoppeliaSim...")
     sim.startSimulation()
     time.sleep(2.0)
