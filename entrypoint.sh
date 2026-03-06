@@ -41,8 +41,8 @@ echo "======================================"
 echo " Starting CoppeliaSim with your scene"
 echo "======================================"
 
-# Use the scene file and enable ZMQ
-COPPELIA_CMD="/opt/coppelia/coppeliaSim -s0 -GzmqRemoteApi.rpcPort=23000 -GzmqRemoteApi.cntPort=23001 -GzmqRemoteApi.rpcAddress=0.0.0.0 /app/pick_and_place.ttt"
+# Use the scene file and enable ZMQ - using -h flag like in your working example
+COPPELIA_CMD="/opt/coppelia/coppeliaSim -h -GzmqRemoteApi.rpcPort=23000 -GzmqRemoteApi.cntPort=23001 /app/pick_and_place.ttt"
 
 echo "Command: xvfb-run -a $COPPELIA_CMD"
 echo "Starting at: $(date)"
@@ -56,127 +56,148 @@ COPPELIA_PID=$!
 echo "CoppeliaSim started with PID: $COPPELIA_PID"
 echo "Log file: coppeliasim.log"
 
-# Wait for process to initialize
-echo "Waiting for CoppeliaSim to initialize..."
-sleep 10
-
-# Check if process is still running
-if ! kill -0 $COPPELIA_PID 2>/dev/null; then
-    echo "❌ ERROR: CoppeliaSim process died!"
-    echo "Last 50 lines of log:"
-    tail -50 coppeliasim.log
-    exit 1
-fi
-echo "✅ CoppeliaSim process is running"
-
-# ======================================
-# Wait for ZMQ ports
-# ======================================
 echo "======================================"
-echo " Waiting for ZMQ ports"
+echo " Waiting for ZMQ Remote API server"
 echo "======================================"
 
-TIMEOUT=30
+TIMEOUT=120
 ELAPSED=0
+ZMQ_DETECTED=false
+
+# Watch for the ZMQ addon loading
 while [ $ELAPSED -lt $TIMEOUT ]; do
-    if netstat -tln 2>/dev/null | grep -q ":23000"; then
-        echo "✅ Port 23000 is listening after ${ELAPSED}s"
+    if grep -q "ZMQ remote API server" coppeliasim.log 2>/dev/null; then
+        echo "✅ ZMQ addon detected in log after ${ELAPSED}s"
+        ZMQ_DETECTED=true
         break
     fi
-    echo "  waiting for port 23000... ${ELAPSED}s/${TIMEOUT}s"
     sleep 2
     ELAPSED=$((ELAPSED+2))
+    echo "  waiting... ${ELAPSED}s / ${TIMEOUT}s"
+    
+    # Show log tail every 20 seconds
+    if [ $((ELAPSED % 20)) -eq 0 ]; then
+        echo "--- Last 5 lines of log at ${ELAPSED}s ---"
+        tail -5 coppeliasim.log 2>/dev/null || true
+        echo "----------------------------------------"
+    fi
+    
+    # Check if process is still running
+    if ! kill -0 $COPPELIA_PID 2>/dev/null; then
+        echo "❌ ERROR: CoppeliaSim process died!"
+        cat coppeliasim.log
+        exit 1
+    fi
 done
 
-if [ $ELAPSED -ge $TIMEOUT ]; then
-    echo "❌ ERROR: Port 23000 never opened"
-    tail -50 coppeliasim.log
+if [ "$ZMQ_DETECTED" = false ]; then
+    echo "❌ ERROR: ZMQ addon never appeared in log"
+    cat coppeliasim.log
     exit 1
 fi
 
-# Wait a bit more for the scene to fully load
-echo "Waiting for scene to fully load..."
-sleep 5
-
-# ======================================
-# Test ZMQ connection to the scene
-# ======================================
 echo "======================================"
-echo " Testing ZMQ connection to your scene"
+echo " Waiting for RPC port 23000"
+echo "======================================"
+
+# Wait for port to be open
+python3 << 'PY'
+import socket, time, sys
+
+deadline = time.time() + 30
+while time.time() < deadline:
+    try:
+        s = socket.create_connection(("localhost", 23000), 2)
+        s.close()
+        print("✅ ZMQ RPC port is OPEN")
+        sys.exit(0)
+    except Exception:
+        time.sleep(1)
+
+print("❌ ERROR: rpc port 23000 never opened", file=sys.stderr)
+sys.exit(1)
+PY
+
+if [ $? -ne 0 ]; then
+    echo "❌ ZMQ connection failed"
+    cat coppeliasim.log
+    kill -9 $COPPELIA_PID || true
+    exit 1
+fi
+
+echo "======================================"
+echo " Testing scene objects"
 echo "======================================"
 
 cat > test_scene.py << 'EOF'
 import time
 import sys
+from coppeliasim_zmqremoteapi_client import RemoteAPIClient
+
+print("✅ Imported RemoteAPIClient")
+
+# Connect to simulator
+client = RemoteAPIClient()
+sim = client.require('sim')
+
+print("\n🔍 Looking for UR10 robot...")
+
+# Method 1: Try to get UR10 directly (like in your main.py)
 try:
-    from coppeliasim_zmqremoteapi_client import RemoteAPIClient
-    print("✅ Imported RemoteAPIClient")
+    ur10_handle = sim.getObject('/UR10')
+    print(f"✅ Found UR10 with handle: {ur10_handle}")
     
-    # Connect to simulator
-    client = RemoteAPIClient()
-    sim = client.require('sim')
+    # Get joint positions
+    print("\n🔧 UR10 Joint positions:")
+    joint_names = [
+        'UR10_joint1', 'UR10_joint2', 'UR10_joint3', 
+        'UR10_joint4', 'UR10_joint5', 'UR10_joint6'
+    ]
     
-    print("\n🔍 Getting scene objects:")
-    
-    # Method 1: Get all objects from the scene root
-    # First get the scene handle
-    scene_handle = sim.getObject('/')  # Root object handle
-    print(f"Scene root handle: {scene_handle}")
-    
-    # Get all children of the scene
-    objects = sim.getObjectChildren(scene_handle)
-    print(f"Found {len(objects)} objects in scene")
-    
-    # List all objects with their names and types
-    print("\n📋 Objects in scene:")
-    for i, obj in enumerate(objects):
-        name = sim.getObjectAlias(obj)
-        obj_type = sim.getObjectType(obj)
-        print(f"  {i}: {name} (handle: {obj}, type: {obj_type})")
-    
-    # Check for UR10 specifically
-    ur10_found = False
-    possible_names = ['UR10', 'UR10_robot', 'UR10Robot', 'ur10', '/UR10']
-    
-    print("\n🔍 Searching for UR10 robot...")
-    for name in possible_names:
+    for joint_name in joint_names:
         try:
-            ur10_handle = sim.getObject(name)
-            print(f"✅ Found UR10 with name '{name}' (handle: {ur10_handle})")
-            ur10_found = True
-            
-            # Get all joints of the UR10
-            print(f"\n🔧 UR10 Joints:")
-            joint_handles = sim.getObjectChildren(ur10_handle)
-            for joint in joint_handles:
-                joint_name = sim.getObjectAlias(joint)
-                joint_type = sim.getObjectType(joint)
-                if joint_type == 3:  # sim.object_joint_type = 3
-                    joint_pos = sim.getJointPosition(joint)
-                    print(f"  - {joint_name}: position = {joint_pos}")
-            break
-        except Exception as e:
-            print(f"  Not found as '{name}': {e}")
-            continue
+            joint_handle = sim.getObject(f'/UR10/{joint_name}')
+            joint_pos = sim.getJointPosition(joint_handle)
+            print(f"  {joint_name}: {joint_pos}")
+        except:
+            print(f"  {joint_name}: not found")
     
-    if not ur10_found:
-        print("\n❌ UR10 not found with common names")
-        print("\nAvailable objects in scene:")
-        for obj in objects:
-            name = sim.getObjectAlias(obj)
-            obj_type = sim.getObjectType(obj)
-            print(f"  - {name} (type: {obj_type})")
+    sys.exit(0)
     
-    # Get simulation time to verify connection
-    sim_time = sim.getSimulationTime()
-    print(f"\n✅ Connection verified. Simulation time: {sim_time}")
-    
-    sys.exit(0 if ur10_found else 1)
-        
 except Exception as e:
-    print(f"❌ Error: {e}")
-    import traceback
-    traceback.print_exc()
+    print(f"❌ Could not find UR10: {e}")
+    
+    # Method 2: List all objects to see what's available
+    print("\n🔍 Listing all objects in scene:")
+    # Try to get the scene object
+    try:
+        # Get all objects in the scene
+        all_objects = []
+        # Try to get objects by iterating through possible handles
+        for i in range(100):
+            try:
+                obj_name = sim.getObjectAlias(i)
+                if obj_name:
+                    all_objects.append((i, obj_name))
+            except:
+                pass
+        
+        if all_objects:
+            for handle, name in all_objects:
+                print(f"  Handle {handle}: {name}")
+        else:
+            print("  No objects found with handle iteration")
+            
+        # Try to get the conveyor sensor mentioned in main.py
+        try:
+            sensor = sim.getObject('/ConveyorSensor')
+            print(f"\n✅ Found ConveyorSensor: {sensor}")
+        except:
+            print("\n❌ ConveyorSensor not found")
+            
+    except Exception as e2:
+        print(f"Error listing objects: {e2}")
+    
     sys.exit(1)
 EOF
 
