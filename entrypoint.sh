@@ -48,13 +48,8 @@ echo "======================================"
 echo " Starting CoppeliaSim (headless debug mode)"
 echo "======================================"
 
-# IMPORTANT: -s requires a number (milliseconds to auto-stop)
-# For loading a scene, just provide the file path or use -f
-# Option 1: Just provide the scene file (simplest)
-COPPELIA_CMD="/opt/coppelia/coppeliaSim -h -GzmqRemoteApi.rpcPort=23000 -GzmqRemoteApi.cntPort=23001 -GzmqRemoteApi.rpcAddress=0.0.0.0 /app/pick_and_place.ttt"
-
-# Option 2: Use -f flag explicitly (alternative)
-# COPPELIA_CMD="/opt/coppelia/coppeliaSim -h -GzmqRemoteApi.rpcPort=23000 -GzmqRemoteApi.cntPort=23001 -GzmqRemoteApi.rpcAddress=0.0.0.0 -f /app/pick_and_place.ttt"
+# Use true headless mode for better compatibility
+COPPELIA_CMD="/opt/coppelia/coppeliaSim -H -GzmqRemoteApi.rpcPort=23000 -GzmqRemoteApi.cntPort=23001 -GzmqRemoteApi.rpcAddress=0.0.0.0 /app/pick_and_place.ttt"
 
 echo "Command: xvfb-run -a $COPPELIA_CMD"
 echo "Starting at: $(date)"
@@ -102,51 +97,72 @@ check_log() {
     fi
     
     # Look for various ZMQ-related messages
-    if grep -i -E "zmq|zeromq|remote api" coppeliasim.log > /dev/null; then
-        echo "✅ ZMQ-related message found:"
-        grep -i -E "zmq|zeromq|remote api" coppeliasim.log | tail -5
+    if grep -q "ZMQ remote API server" coppeliasim.log; then
+        echo "✅ ZMQ addon loaded message found"
         return 0
     fi
     return 1
 }
 
-# Function to check ports directly
+# Function to check ports directly with better error handling
 check_ports() {
-    # Try using netstat
+    local rpc_open=false
+    local cnt_open=false
+    
+    # Check RPC port (23000)
     if command -v netstat >/dev/null 2>&1; then
         if netstat -tln 2>/dev/null | grep -q ":23000"; then
             echo "✅ Port 23000 is listening (via netstat)"
-            return 0
+            rpc_open=true
         fi
     fi
     
-    # Try using ss
-    if command -v ss >/dev/null 2>&1; then
-        if ss -tln 2>/dev/null | grep -q ":23000"; then
-            echo "✅ Port 23000 is listening (via ss)"
-            return 0
+    # Check control port (23001)
+    if command -v netstat >/dev/null 2>&1; then
+        if netstat -tln 2>/dev/null | grep -q ":23001"; then
+            echo "✅ Port 23001 is listening (via netstat)"
+            cnt_open=true
         fi
     fi
     
-    # Try using Python
-    python3 << 'EOF' 2>/dev/null
+    # Try Python for both ports if netstat didn't work
+    if [ "$rpc_open" = false ] || [ "$cnt_open" = false ]; then
+        python3 << 'EOF' 2>/dev/null
 import socket
 import sys
-try:
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.settimeout(1)
-    result = s.connect_ex(('localhost', 23000))
-    s.close()
-    sys.exit(0 if result == 0 else 1)
-except:
-    sys.exit(1)
+
+def check_port(port):
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(1)
+        result = s.connect_ex(('localhost', port))
+        s.close()
+        return result == 0
+    except:
+        return False
+
+rpc = check_port(23000)
+cnt = check_port(23001)
+
+if rpc:
+    print("Port 23000 is open")
+if cnt:
+    print("Port 23001 is open")
+
+sys.exit(0 if rpc and cnt else 1)
 EOF
-    if [ $? -eq 0 ]; then
-        echo "✅ Port 23000 is open (via Python)"
-        return 0
+        PYTHON_RESULT=$?
+        if [ $PYTHON_RESULT -eq 0 ]; then
+            rpc_open=true
+            cnt_open=true
+        fi
     fi
     
-    return 1
+    if [ "$rpc_open" = true ] && [ "$cnt_open" = true ]; then
+        return 0
+    else
+        return 1
+    fi
 }
 
 # Main monitoring loop
@@ -161,16 +177,15 @@ while [ $ELAPSED -lt $TIMEOUT ]; do
     fi
     
     # Check for ZMQ in log
-    if check_log; then
+    if [ "$ZMQ_DETECTED" = false ] && check_log; then
         ZMQ_DETECTED=true
         echo "✅ ZMQ detected in log at ${ELAPSED}s"
-        break
+        # Continue to wait for ports
     fi
     
     # Check ports directly
     if check_ports; then
-        ZMQ_DETECTED=true
-        echo "✅ ZMQ ports detected at ${ELAPSED}s"
+        echo "✅ Both ZMQ ports are open at ${ELAPSED}s"
         break
     fi
     
@@ -188,15 +203,19 @@ while [ $ELAPSED -lt $TIMEOUT ]; do
 done
 
 # Final check
-if [ "$ZMQ_DETECTED" = false ]; then
+if ! check_ports; then
     echo "======================================"
-    echo "❌ ERROR: ZMQ never detected after ${TIMEOUT}s"
+    echo "❌ ERROR: ZMQ ports not fully open after ${TIMEOUT}s"
     echo "======================================"
     
     echo "Complete log file content:"
     echo "--------------------------"
     cat coppeliasim.log
     echo "--------------------------"
+    
+    # Check listening ports
+    echo "Listening ports:"
+    netstat -tln 2>/dev/null || ss -tln 2>/dev/null || echo "No port listing tools available"
     
     # Check if process is still running
     if kill -0 $COPPELIA_PID 2>/dev/null; then
@@ -211,62 +230,64 @@ if [ "$ZMQ_DETECTED" = false ]; then
 fi
 
 # ======================================
-# Verify ZMQ is fully operational
+# Additional wait to ensure ZMQ is fully initialized
 # ======================================
 echo "======================================"
-echo " Verifying ZMQ Remote API server"
+echo " Waiting for ZMQ to fully initialize..."
+echo "======================================"
+sleep 5
+
+# ======================================
+# Verify ZMQ is fully operational with a client test
+# ======================================
+echo "======================================"
+echo " Testing ZMQ Remote API client connection"
 echo "======================================"
 
 # Create Python test script
-cat > test_zmq.py << 'EOF'
-import socket
+cat > test_zmq_client.py << 'EOF'
 import time
 import sys
-
-def test_port(port, timeout=30):
-    print(f"Testing port {port}...")
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.settimeout(2)
-            result = s.connect_ex(('localhost', port))
-            s.close()
-            if result == 0:
-                print(f"✅ Port {port} is open")
-                return True
-        except Exception as e:
-            print(f"Error testing port {port}: {e}")
-        time.sleep(1)
-    print(f"❌ Port {port} never opened")
-    return False
-
-if __name__ == "__main__":
-    print("Testing ZMQ ports...")
-    port1 = test_port(23000)
-    port2 = test_port(23001)
+try:
+    from coppeliasim_zmqremoteapi_client import RemoteAPIClient
+    print("✅ Imported RemoteAPIClient")
     
-    if port1 and port2:
-        print("✅ Both ZMQ ports are open")
-        sys.exit(0)
-    else:
-        print("❌ ZMQ ports not fully open")
-        sys.exit(1)
+    # Try to connect
+    print("Attempting to connect to ZMQ Remote API...")
+    client = RemoteAPIClient('localhost', 23000)
+    sim = client.require('sim')
+    
+    # Test basic API call
+    print("Testing sim.getSimulationTime()...")
+    sim_time = sim.getSimulationTime()
+    print(f"✅ Success! Simulation time: {sim_time}")
+    
+    # Test getting object handles
+    print("Testing sim.getObject('/')...")
+    scene_object = sim.getObject('/')
+    print(f"✅ Success! Root object handle: {scene_object}")
+    
+    print("✅ ZMQ Remote API is fully operational!")
+    sys.exit(0)
+except Exception as e:
+    print(f"❌ Error: {e}")
+    sys.exit(1)
 EOF
 
 # Run the test
-echo "Running ZMQ port test..."
-python3 test_zmq.py
+echo "Running ZMQ client test..."
+python3 test_zmq_client.py
 ZMQ_TEST=$?
 
 if [ $ZMQ_TEST -ne 0 ]; then
-    echo "❌ ZMQ port test failed"
-    cat coppeliasim.log
+    echo "❌ ZMQ client test failed"
+    echo "Last 50 lines of log:"
+    tail -50 coppeliasim.log
     kill -9 $COPPELIA_PID || true
     exit 1
 fi
 
-echo "✅ ZMQ Remote API server is ready!"
+echo "✅ ZMQ Remote API server is fully operational!"
 
 # ======================================
 # Run pytest
@@ -322,8 +343,5 @@ echo "Last 50 lines of simulator log:"
 echo "--------------------------------"
 tail -n 50 coppeliasim.log || true
 echo "--------------------------------"
-
-echo "ZMQ debug log (if any):"
-cat zmq_debug.log 2>/dev/null || echo "No ZMQ debug log"
 
 exit $TEST_EXIT_CODE
