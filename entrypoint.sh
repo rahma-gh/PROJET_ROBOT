@@ -44,14 +44,22 @@ done
 # message arrives before the socket appears, which is why the tests were
 # hanging earlier.
 sleep 3
-# verify that the RPC port is open using a built‑in bash probe (no nc)
-for i in 1 2 3; do
-    if (echo > /dev/tcp/localhost/23000) 2>/dev/null; then
-        echo "rpc port 23000 is open"
-        break
-    fi
-    sleep 1
-done
+# verify that the RPC port is truly accessible using Python socket (same as pytest does)
+python3 << 'PYEOF'
+import socket
+import sys
+import time
+deadline = time.time() + 60
+while time.time() < deadline:
+    try:
+        with socket.create_connection(('localhost', 23000), 1):
+            print('rpc port 23000 is open')
+            sys.exit(0)
+    except OSError:
+        time.sleep(0.5)
+print('ERROR: rpc port 23000 not reachable after 60s', file=sys.stderr)
+sys.exit(1)
+PYEOF
 
 if [ $ELAPSED -ge $TIMEOUT ]; then
     echo "ERROR: ZMQ remote API server did not appear in log after ${TIMEOUT}s"
