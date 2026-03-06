@@ -30,35 +30,13 @@ INTERVAL=2
 ELAPSED=0
 
 # Watch for the exact log line CoppeliaSim prints when the ZMQ addon is loaded
-until grep -q "ZMQ" coppeliasim.log 2>/dev/null \
+until grep -q "ZMQ remote API server" coppeliasim.log 2>/dev/null \
    || [ $ELAPSED -ge $TIMEOUT ]; do
     sleep $INTERVAL
     ELAPSED=$((ELAPSED + INTERVAL))
     echo "  waiting... (${ELAPSED}s / ${TIMEOUT}s)"
     tail -n 1 coppeliasim.log 2>/dev/null || true
-
 done
-
-# once the add‑on has printed something containing "ZMQ" we still wait a
-# longer time for the port to actually be bound.  CoppeliaSim can take a while
-# to fully initialize the ZMQ server socket even after logging the startup message.
-sleep 10
-# verify that the RPC port is truly accessible using Python socket (same as pytest does)
-python3 << 'PYEOF'
-import socket
-import sys
-import time
-deadline = time.time() + 120
-while time.time() < deadline:
-    try:
-        with socket.create_connection(('localhost', 23000), 1):
-            print('rpc port 23000 is open')
-            sys.exit(0)
-    except OSError:
-        time.sleep(0.5)
-print('ERROR: rpc port 23000 not reachable after 120s', file=sys.stderr)
-sys.exit(1)
-PYEOF
 
 if [ $ELAPSED -ge $TIMEOUT ]; then
     echo "ERROR: ZMQ remote API server did not appear in log after ${TIMEOUT}s"
