@@ -17,7 +17,6 @@ RUN apt-get update && apt-get install -y \
    libx11-6 \
    libglib2.0-0 \
    libsodium-dev \
-   libzmq3-dev \
    libxcb-icccm4 \
    libxcb-image0 \
    libxcb-keysyms1 \
