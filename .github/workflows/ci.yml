@@ -20,50 +20,50 @@ jobs:
       - name: Run tests inside container
         run: |
           mkdir -p output
+          # Don't override the command - let the container start normally
           docker run --rm \
             -v ${{ github.workspace }}/output:/app/output \
+            --name cps-test \
             cps-test-image \
-            /bin/bash -c "
-              # CoppeliaSim is already started by the container's entrypoint
-              # Just wait for ZMQ server to be ready on port 23000
-              echo '=== Waiting for ZMQ Remote API server to be ready ==='
-              for i in {1..120}; do
-                if nc -z localhost 23000 2>/dev/null; then
-                  echo 'ZMQ server is ready after '\$i' seconds'
-                  break
-                fi
-                echo '  waiting... ('\$i's / 120s)'
-                sleep 1
-              done
-              
-              if [ \$i -eq 120 ]; then
-                echo 'ZMQ server failed to start within 120 seconds'
-                echo '=== Checking if CoppeliaSim is running ==='
-                ps aux | grep coppelia
-                echo '=== Last 50 lines of coppeliasim.log ==='
-                tail -50 /app/coppeliasim.log 2>/dev/null || echo 'Log file not found'
-                exit 1
-              fi
-              
-              # Additional small delay to ensure scene is fully settled
-              echo 'Waiting 2 more seconds for scene to settle...'
-              sleep 2
-              
-              # Run the tests
-              echo '=== Running pytest ==='
-              cd /app
-              pytest --timeout=180 --html=report.html --self-contained-html -v
-              
-              # Store exit code
-              EXIT_CODE=\$?
-              
-              echo '=== Test execution completed with exit code: \$EXIT_CODE ==='
-              exit \$EXIT_CODE
-            "
+            & # Run in background
+          
+          # Get the container ID
+          CONTAINER_ID=$(docker ps -q -f name=cps-test)
+          
+          # Wait for ZMQ server to be ready by checking inside the running container
+          echo '=== Waiting for ZMQ Remote API server to be ready ==='
+          for i in {1..120}; do
+            if docker exec $CONTAINER_ID nc -z localhost 23000 2>/dev/null; then
+              echo "ZMQ server is ready after $i seconds"
+              break
+            fi
+            echo "  waiting... (${i}s / 120s)"
+            sleep 1
+          done
+          
+          if [ $i -eq 120 ]; then
+            echo 'ZMQ server failed to start within 120 seconds'
+            docker exec $CONTAINER_ID ps aux | grep -i coppelia
+            docker exec $CONTAINER_ID cat /app/coppeliasim.log 2>/dev/null || echo 'Log file not found'
+            docker stop $CONTAINER_ID
+            exit 1
+          fi
+          
+          # Run pytest inside the container
+          echo '=== Running pytest ==='
+          docker exec $CONTAINER_ID pytest --timeout=180 --html=/app/output/report.html --self-contained-html
+          
+          # Store exit code
+          EXIT_CODE=$?
+          
+          # Stop the container
+          docker stop $CONTAINER_ID
+          
+          exit $EXIT_CODE
 
       - name: Upload Test Report
         uses: actions/upload-artifact@v4
         with:
           name: test-report
           path: output/report.html
-        if: always()  # Upload even if tests fail
+        if: always()
