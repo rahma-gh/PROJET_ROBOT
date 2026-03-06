@@ -30,7 +30,7 @@ INTERVAL=2
 ELAPSED=0
 
 # Watch for the exact log line CoppeliaSim prints when the ZMQ addon is loaded
-until grep -q "add-on 'ZMQ remote API server.lua' was loaded" coppeliasim.log 2>/dev/null \
+until grep -q "ZMQ remote API server" coppeliasim.log 2>/dev/null \
    || [ $ELAPSED -ge $TIMEOUT ]; do
     sleep $INTERVAL
     ELAPSED=$((ELAPSED + INTERVAL))
@@ -48,7 +48,37 @@ fi
 echo "CoppeliaSim ZMQ server addon loaded. Waiting for scene to settle..."
 sleep 3
 
-echo "=== CoppeliaSim is ready ==="
+echo "=== Running pytest ==="
 
-# Wait for CoppeliaSim to finish (keeps container running)
-wait $COPPELIA_PID
+export PYTHONPATH=/app
+
+if [ -d "/app/tests" ]; then
+    TEST_PATH="tests/"
+else
+    TEST_PATH="."
+fi
+
+pytest $TEST_PATH \
+    --html=report.html \
+    --self-contained-html \
+    --timeout=180 \
+    --timeout-method=thread \
+    -vv
+
+TEST_EXIT_CODE=$?
+
+echo "=== Stopping CoppeliaSim ==="
+
+kill -TERM $COPPELIA_PID 2>/dev/null || true
+timeout 8s wait $COPPELIA_PID 2>/dev/null || true
+
+if kill -0 $COPPELIA_PID 2>/dev/null; then
+    echo "CoppeliaSim still alive → force kill"
+    kill -KILL $COPPELIA_PID 2>/dev/null || true
+fi
+
+echo "=== Test finished with exit code $TEST_EXIT_CODE ==="
+echo "Last 20 lines of coppeliasim.log:"
+tail -n 20 coppeliasim.log
+
+exit $TEST_EXIT_CODE
