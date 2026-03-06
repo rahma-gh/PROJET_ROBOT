@@ -48,6 +48,32 @@ fi
 echo "CoppeliaSim ZMQ server addon loaded. Waiting for scene to settle..."
 sleep 3
 
+# Verify the port is actually open before proceeding to tests
+echo "Verifying ZMQ port connectivity..."
+python3 << 'PYEOF'
+import socket
+import sys
+import time
+deadline = time.time() + 60
+while time.time() < deadline:
+    try:
+        with socket.create_connection(('localhost', 23000), 1):
+            print('rpc port 23000 is open')
+            sys.exit(0)
+    except OSError:
+        time.sleep(0.5)
+print('ERROR: rpc port 23000 not reachable after 60s', file=sys.stderr)
+sys.exit(1)
+PYEOF
+
+if [ $? -ne 0 ]; then
+    echo "ERROR: Could not connect to ZMQ remote API server"
+    echo "=== Full CoppeliaSim log ==="
+    cat coppeliasim.log || true
+    kill -TERM $COPPELIA_PID 2>/dev/null || true
+    exit 1
+fi
+
 echo "=== Running pytest ==="
 
 export PYTHONPATH=/app
