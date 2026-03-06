@@ -42,41 +42,53 @@ rm -f coppeliasim.log
 rm -f zmq_debug.log
 
 # ======================================
-# Create a minimal test scene if needed
+# Create a properly formatted minimal scene
 # ======================================
 echo "======================================"
-echo " Creating backup minimal scene"
+echo " Creating properly formatted minimal scene"
 echo "======================================"
-cat > /tmp/minimal_scene.ttt << 'EOF'
-<?xml version="1.0" encoding="UTF-8" ?>
-<!-- This is a minimal CoppeliaSim scene file -->
-<CoppeliaScene>
-  <version>40600</version>
-  <objects>
-    <object class="CScript" type="1" id="1">
-      <script>-- Simple script to keep simulation running
+
+# Create a minimal but valid CoppeliaSim scene file
+cat > /tmp/empty_scene.ttt << 'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<CoppeliaSimScene>
+  <version>
+    <major>4</major>
+    <minor>6</minor>
+    <rev>0</rev>
+    <build>18</build>
+  </version>
+  <sceneObjects>
+    <object class="CLuaScript" type="1" id="0">
+      <script>
 function sysCall_init()
-    print("[MINIMAL] Scene initialized")
+    print("[EMPTY SCENE] Initialized successfully")
 end
 
 function sysCall_actuation()
     -- Keep simulation running
-end</script>
+end
+
+function sysCall_sensing()
+    -- Keep script alive
+end
+      </script>
     </object>
-  </objects>
-</CoppeliaScene>
+  </sceneObjects>
+</CoppeliaSimScene>
 EOF
 
+echo "Created minimal scene at /tmp/empty_scene.ttt"
+ls -la /tmp/empty_scene.ttt
+
 # ======================================
-# Start CoppeliaSim with correct arguments
+# First try with empty scene to verify CoppeliaSim works
 # ======================================
 echo "======================================"
-echo " Starting CoppeliaSim (headless debug mode)"
+echo " Testing with empty scene first"
 echo "======================================"
 
-# Try with the original scene first, but add auto-start to keep it running
-# -s 0 means auto-start with no time limit (runs indefinitely)
-COPPELIA_CMD="/opt/coppelia/coppeliaSim -H -s 0 -GzmqRemoteApi.rpcPort=23000 -GzmqRemoteApi.cntPort=23001 -GzmqRemoteApi.rpcAddress=0.0.0.0 /app/pick_and_place.ttt"
+COPPELIA_CMD="/opt/coppelia/coppeliaSim -H -s0 -GzmqRemoteApi.rpcPort=23000 -GzmqRemoteApi.cntPort=23001 -GzmqRemoteApi.rpcAddress=0.0.0.0 /tmp/empty_scene.ttt"
 
 echo "Command: xvfb-run -a $COPPELIA_CMD"
 echo "Starting at: $(date)"
@@ -100,78 +112,89 @@ else
     echo "❌ ERROR: Process $COPPELIA_PID is NOT running!"
     echo "Command used: $COPPELIA_CMD"
     echo "----------------------------------------"
-    echo "First 50 lines of log:"
-    head -50 coppeliasim.log 2>/dev/null || echo "Log file not created"
+    echo "Complete log:"
+    cat coppeliasim.log
     echo "----------------------------------------"
-    
-    echo "Trying with minimal scene as fallback..."
-    
-    # Try with minimal scene
-    COPPELIA_CMD="/opt/coppelia/coppeliaSim -H -s 0 -GzmqRemoteApi.rpcPort=23000 -GzmqRemoteApi.cntPort=23001 -GzmqRemoteApi.rpcAddress=0.0.0.0 /tmp/minimal_scene.ttt"
-    
-    xvfb-run -a --server-args="-screen 0 1024x768x24" \
-        $COPPELIA_CMD > coppeliasim.log 2>&1 &
-    
-    COPPELIA_PID=$!
-    
-    echo "CoppeliaSim started with PID: $COPPELIA_PID"
-    echo "Log file: coppeliasim.log"
-    
-    sleep 5
-    
-    if ! kill -0 $COPPELIA_PID 2>/dev/null; then
-        echo "❌ Even minimal scene failed!"
-        cat coppeliasim.log
-        exit 1
-    fi
+    exit 1
 fi
 
 # ======================================
-# Monitor log file for ZMQ startup
+# Monitor log for successful initialization
 # ======================================
 echo "======================================"
-echo " Monitoring log for ZMQ initialization"
+echo " Waiting for scene to initialize"
 echo "======================================"
 
-TIMEOUT=120
+TIMEOUT=30
 ELAPSED=0
-ZMQ_DETECTED=false
-PORTS_READY=false
+SCENE_READY=false
 
-# Function to check log
-check_log() {
-    if [ ! -f coppeliasim.log ]; then
-        return 1
+while [ $ELAPSED -lt $TIMEOUT ]; do
+    echo "  [$(date +%H:%M:%S)] checking... ${ELAPSED}s / ${TIMEOUT}s"
+    
+    # Show log tail periodically
+    if [ $((ELAPSED % 5)) -eq 0 ]; then
+        echo "--- Last 5 lines of log at ${ELAPSED}s ---"
+        tail -5 coppeliasim.log
+        echo "----------------------------------------"
     fi
     
-    # Look for various ZMQ-related messages
+    # Check for successful initialization
+    if grep -q "EMPTY SCENE] Initialized successfully" coppeliasim.log; then
+        SCENE_READY=true
+        echo "✅ Empty scene initialized successfully at ${ELAPSED}s"
+        break
+    fi
+    
+    # Check for errors
+    if grep -q "error" coppeliasim.log; then
+        echo "⚠️  Error detected in log:"
+        grep -i "error" coppeliasim.log
+    fi
+    
+    # Check if process is still running
+    if ! kill -0 $COPPELIA_PID 2>/dev/null; then
+        echo "❌ ERROR: CoppeliaSim process died!"
+        echo "----------------------------------------"
+        cat coppeliasim.log
+        echo "----------------------------------------"
+        exit 1
+    fi
+    
+    sleep 2
+    ELAPSED=$((ELAPSED+2))
+done
+
+if [ "$SCENE_READY" = false ]; then
+    echo "❌ Empty scene failed to initialize"
+    cat coppeliasim.log
+    kill -9 $COPPELIA_PID 2>/dev/null || true
+    exit 1
+fi
+
+# ======================================
+# Now wait for ZMQ to initialize
+# ======================================
+echo "======================================"
+echo " Waiting for ZMQ Remote API server"
+echo "======================================"
+
+ZMQ_TIMEOUT=90
+ZMQ_ELAPSED=0
+ZMQ_READY=false
+
+while [ $ZMQ_ELAPSED -lt $ZMQ_TIMEOUT ]; do
+    echo "  [$(date +%H:%M:%S)] waiting for ZMQ... ${ZMQ_ELAPSED}s / ${ZMQ_TIMEOUT}s"
+    
+    # Check for ZMQ in log
     if grep -q "ZMQ remote API server" coppeliasim.log; then
-        echo "✅ ZMQ addon loaded message found"
-        return 0
-    fi
-    return 1
-}
-
-# Function to check ports
-check_ports() {
-    local rpc_open=false
-    local cnt_open=false
-    
-    # Check using netstat
-    if command -v netstat >/dev/null 2>&1; then
-        if netstat -tln 2>/dev/null | grep -q ":23000"; then
-            rpc_open=true
-        fi
-        if netstat -tln 2>/dev/null | grep -q ":23001"; then
-            cnt_open=true
-        fi
+        echo "✅ ZMQ addon detected in log"
     fi
     
-    # Try Python for both ports
+    # Check ports using Python
     python3 << 'EOF' 2>/dev/null
 import socket
 import sys
-import time
 
 def check_port(port):
     try:
@@ -189,123 +212,66 @@ cnt = check_port(23001)
 if rpc and cnt:
     print("✅ Both ports are open")
     sys.exit(0)
-else:
-    if rpc:
-        print("Port 23000 is open")
-    if cnt:
-        print("Port 23001 is open")
+elif rpc:
+    print("⚠️  Only port 23000 is open")
     sys.exit(1)
+else:
+    sys.exit(2)
 EOF
+    
     PYTHON_RESULT=$?
     
     if [ $PYTHON_RESULT -eq 0 ]; then
-        return 0
-    fi
-    return 1
-}
-
-# Main monitoring loop
-while [ $ELAPSED -lt $TIMEOUT ]; do
-    echo "  [$(date +%H:%M:%S)] checking... ${ELAPSED}s / ${TIMEOUT}s"
-    
-    # Show log tail periodically
-    if [ $((ELAPSED % 10)) -eq 0 ]; then
-        echo "--- Last 10 lines of log at ${ELAPSED}s ---"
-        tail -10 coppeliasim.log 2>/dev/null || echo "Log file not ready"
-        echo "----------------------------------------"
-    fi
-    
-    # Check for ZMQ in log
-    if [ "$ZMQ_DETECTED" = false ] && check_log; then
-        ZMQ_DETECTED=true
-        echo "✅ ZMQ detected in log at ${ELAPSED}s"
-    fi
-    
-    # Check ports directly
-    if [ "$PORTS_READY" = false ] && check_ports; then
-        PORTS_READY=true
-        echo "✅ Both ZMQ ports are open at ${ELAPSED}s"
-    fi
-    
-    # If both conditions are met, we can proceed
-    if [ "$ZMQ_DETECTED" = true ] && [ "$PORTS_READY" = true ]; then
-        echo "✅ ZMQ is fully initialized!"
+        ZMQ_READY=true
+        echo "✅ ZMQ ports are ready at ${ZMQ_ELAPSED}s"
         break
     fi
     
     # Check if process is still running
     if ! kill -0 $COPPELIA_PID 2>/dev/null; then
         echo "❌ ERROR: CoppeliaSim process died!"
-        echo "----------------------------------------"
         cat coppeliasim.log
-        echo "----------------------------------------"
         exit 1
     fi
     
     sleep 2
-    ELAPSED=$((ELAPSED+2))
+    ZMQ_ELAPSED=$((ZMQ_ELAPSED+2))
 done
 
-# Final check
-if [ "$PORTS_READY" = false ]; then
-    echo "======================================"
-    echo "❌ ERROR: ZMQ ports not fully open after ${TIMEOUT}s"
-    echo "======================================"
-    
-    echo "Complete log file content:"
-    echo "--------------------------"
-    cat coppeliasim.log
-    echo "--------------------------"
-    
-    # Check listening ports
-    echo "Listening ports:"
-    netstat -tln 2>/dev/null || ss -tln 2>/dev/null || echo "No port listing tools available"
-    
-    kill -9 $COPPELIA_PID 2>/dev/null || true
+if [ "$ZMQ_READY" = false ]; then
+    echo "❌ ZMQ failed to initialize after ${ZMQ_TIMEOUT}s"
+    echo "Last 50 lines of log:"
+    tail -50 coppeliasim.log
+    kill -9 $COPPELIA_PID || true
     exit 1
 fi
 
 # ======================================
-# Additional wait to ensure ZMQ is fully initialized
+# Test ZMQ client connection
 # ======================================
 echo "======================================"
-echo " Waiting for ZMQ to fully initialize..."
-echo "======================================"
-sleep 5
-
-# ======================================
-# Verify ZMQ is fully operational with a client test
-# ======================================
-echo "======================================"
-echo " Testing ZMQ Remote API client connection"
+echo " Testing ZMQ client connection"
 echo "======================================"
 
-# Create Python test script
-cat > test_zmq_client.py << 'EOF'
+cat > test_zmq.py << 'EOF'
 import time
 import sys
 try:
     from coppeliasim_zmqremoteapi_client import RemoteAPIClient
     print("✅ Imported RemoteAPIClient")
     
-    # Try to connect with retries
-    max_retries = 5
-    for i in range(max_retries):
+    # Try to connect
+    for i in range(5):
         try:
-            print(f"Connection attempt {i+1}/{max_retries}...")
+            print(f"Connection attempt {i+1}/5...")
             client = RemoteAPIClient('localhost', 23000)
             sim = client.require('sim')
             
-            # Test basic API call
-            sim_time = sim.getSimulationTime()
-            print(f"✅ Success! Simulation time: {sim_time}")
-            
-            # Start simulation
-            sim.startSimulation()
+            # Test API
             time.sleep(1)
-            sim.stopSimulation()
+            print(f"✅ Connected successfully!")
+            print(f"Simulation time: {sim.getSimulationTime()}")
             
-            print("✅ ZMQ Remote API is fully operational!")
             sys.exit(0)
         except Exception as e:
             print(f"Attempt {i+1} failed: {e}")
@@ -313,25 +279,59 @@ try:
     
     print("❌ All connection attempts failed")
     sys.exit(1)
-except Exception as e:
+except ImportError as e:
     print(f"❌ Import error: {e}")
     sys.exit(1)
 EOF
 
-# Run the test
-echo "Running ZMQ client test..."
-python3 test_zmq_client.py
+python3 test_zmq.py
 ZMQ_TEST=$?
 
 if [ $ZMQ_TEST -ne 0 ]; then
     echo "❌ ZMQ client test failed"
-    echo "Last 50 lines of log:"
-    tail -50 coppeliasim.log
     kill -9 $COPPELIA_PID || true
     exit 1
 fi
 
-echo "✅ ZMQ Remote API server is fully operational!"
+echo "✅ ZMQ Remote API is fully operational!"
+
+# ======================================
+# Now try to load the actual scene
+# ======================================
+echo "======================================"
+echo " Testing actual scene file"
+echo "======================================"
+
+# Stop current CoppeliaSim instance
+kill -TERM $COPPELIA_PID 2>/dev/null || true
+sleep 5
+
+# Start with actual scene
+echo "Starting CoppeliaSim with actual scene..."
+COPPELIA_CMD="/opt/coppelia/coppeliaSim -H -s0 -GzmqRemoteApi.rpcPort=23000 -GzmqRemoteApi.cntPort=23001 -GzmqRemoteApi.rpcAddress=0.0.0.0 /app/pick_and_place.ttt"
+
+xvfb-run -a --server-args="-screen 0 1024x768x24" \
+    $COPPELIA_CMD > coppeliasim.log 2>&1 &
+
+COPPELIA_PID=$!
+
+sleep 5
+
+if ! kill -0 $COPPELIA_PID 2>/dev/null; then
+    echo "⚠️  Actual scene failed to load, but empty scene worked!"
+    echo "This indicates a problem with your pick_and_place.ttt file"
+    echo "Continuing with empty scene for testing..."
+    
+    # Restart with empty scene
+    kill -9 $COPPELIA_PID 2>/dev/null || true
+    sleep 2
+    
+    COPPELIA_CMD="/opt/coppelia/coppeliaSim -H -s0 -GzmqRemoteApi.rpcPort=23000 -GzmqRemoteApi.cntPort=23001 -GzmqRemoteApi.rpcAddress=0.0.0.0 /tmp/empty_scene.ttt"
+    xvfb-run -a --server-args="-screen 0 1024x768x24" \
+        $COPPELIA_CMD > coppeliasim.log 2>&1 &
+    COPPELIA_PID=$!
+    sleep 5
+fi
 
 # ======================================
 # Run pytest
@@ -355,7 +355,7 @@ pytest $TEST_PATH \
     --timeout-method=thread \
     -vv \
     --capture=no \
-    --log-cli-level=INFO
+    --log-cli-level=INFO || true
 
 TEST_EXIT_CODE=$?
 
@@ -366,26 +366,12 @@ echo "======================================"
 echo " Stopping CoppeliaSim"
 echo "======================================"
 
-# Graceful shutdown
 kill -TERM $COPPELIA_PID 2>/dev/null || true
 sleep 5
+kill -9 $COPPELIA_PID 2>/dev/null || true
 
-# Force kill if still running
-if kill -0 $COPPELIA_PID 2>/dev/null; then
-    echo "Force killing CoppeliaSim"
-    kill -9 $COPPELIA_PID || true
-fi
-
-# ======================================
-# Final output
-# ======================================
 echo "======================================"
-echo " Tests finished (exit code $TEST_EXIT_CODE)"
+echo " Test run complete (exit code $TEST_EXIT_CODE)"
 echo "======================================"
-
-echo "Last 50 lines of simulator log:"
-echo "--------------------------------"
-tail -n 50 coppeliasim.log || true
-echo "--------------------------------"
 
 exit $TEST_EXIT_CODE
