@@ -14,6 +14,7 @@ echo "=== Starting CoppeliaSim (headless mode) ==="
 xvfb-run --auto-servernum --server-args='-screen 0 1024x768x24' \
   /opt/coppelia/coppeliaSim \
     -h \
+    -s \
     -G zmqRemoteApi.rpcPort=23000 \
     -G zmqRemoteApi.cntPort=23001 \
     /app/pick_and_place.ttt > coppeliasim.log 2>&1 &
@@ -30,7 +31,7 @@ INTERVAL=2
 ELAPSED=0
 
 # Watch for the exact log line CoppeliaSim prints when the ZMQ addon is loaded
-until grep -q "ZMQ server addon loaded" coppeliasim.log 2>/dev/null \
+until grep -q "add-on 'ZMQ remote API server.lua' was loaded" coppeliasim.log 2>/dev/null \
    || [ $ELAPSED -ge $TIMEOUT ]; do
     sleep $INTERVAL
     ELAPSED=$((ELAPSED + INTERVAL))
