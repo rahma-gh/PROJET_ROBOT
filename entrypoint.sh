@@ -41,8 +41,8 @@ echo "======================================"
 echo " Starting CoppeliaSim with your scene"
 echo "======================================"
 
-# Use the scene file and enable ZMQ - using -h flag like in your working example
-COPPELIA_CMD="/opt/coppelia/coppeliaSim -h -GzmqRemoteApi.rpcPort=23000 -GzmqRemoteApi.cntPort=23001 /app/pick_and_place.ttt"
+# Use -s0 to keep simulation running (like we had working before)
+COPPELIA_CMD="/opt/coppelia/coppeliaSim -h -s0 -GzmqRemoteApi.rpcPort=23000 -GzmqRemoteApi.cntPort=23001 /app/pick_and_place.ttt"
 
 echo "Command: xvfb-run -a $COPPELIA_CMD"
 echo "Starting at: $(date)"
@@ -75,17 +75,12 @@ while [ $ELAPSED -lt $TIMEOUT ]; do
     ELAPSED=$((ELAPSED+2))
     echo "  waiting for ZMQ addon... ${ELAPSED}s / ${TIMEOUT}s"
     
-    # Show log tail every 20 seconds
-    if [ $((ELAPSED % 20)) -eq 0 ]; then
-        echo "--- Last 5 lines of log at ${ELAPSED}s ---"
-        tail -5 coppeliasim.log 2>/dev/null || true
-        echo "----------------------------------------"
-    fi
-    
     # Check if process is still running
     if ! kill -0 $COPPELIA_PID 2>/dev/null; then
         echo "❌ ERROR: CoppeliaSim process died!"
-        cat coppeliasim.log
+        echo "--- Last 50 lines of log ---"
+        tail -50 coppeliasim.log
+        echo "---------------------------"
         exit 1
     fi
 done
@@ -111,16 +106,19 @@ while [ $PORT_ELAPSED -lt $PORT_TIMEOUT ]; do
         PORT_READY=true
         break
     fi
+    
+    # Check if process died
+    if ! kill -0 $COPPELIA_PID 2>/dev/null; then
+        echo "❌ ERROR: CoppeliaSim process died while waiting for port!"
+        echo "--- Last 50 lines of log ---"
+        tail -50 coppeliasim.log
+        echo "---------------------------"
+        exit 1
+    fi
+    
     sleep 2
     PORT_ELAPSED=$((PORT_ELAPSED+2))
     echo "  waiting for port 23000... ${PORT_ELAPSED}s / ${PORT_TIMEOUT}s"
-    
-    # Show log tail occasionally
-    if [ $((PORT_ELAPSED % 10)) -eq 0 ]; then
-        echo "--- Recent log entries ---"
-        tail -5 coppeliasim.log
-        echo "--------------------------"
-    fi
 done
 
 if [ "$PORT_READY" = false ]; then
@@ -128,7 +126,7 @@ if [ "$PORT_READY" = false ]; then
     echo "--- Last 50 lines of log ---"
     tail -50 coppeliasim.log
     echo "---------------------------"
-    kill -9 $COPPELIA_PID || true
+    kill -9 $COPPELIA_PID 2>/dev/null || true
     exit 1
 fi
 
@@ -153,10 +151,35 @@ sim = client.require('sim')
 
 print("\n🔍 Looking for UR10 robot...")
 
-# Method 1: Try to get UR10 directly (like in your main.py)
+# First, list all top-level objects to see what's in the scene
+print("\n📋 Top-level objects in scene:")
+try:
+    # Get all objects
+    all_objects = []
+    for i in range(100):  # Check first 100 handles
+        try:
+            name = sim.getObjectAlias(i)
+            if name and name != "":
+                all_objects.append((i, name))
+                print(f"  Handle {i}: {name}")
+        except:
+            pass
+    
+    if not all_objects:
+        print("  No objects found")
+        
+except Exception as e:
+    print(f"Error listing objects: {e}")
+
+# Try to get UR10 directly
+print("\n🔍 Searching for UR10...")
 try:
     ur10_handle = sim.getObject('/UR10')
     print(f"✅ Found UR10 with handle: {ur10_handle}")
+    
+    # Start simulation to test robot movement
+    sim.startSimulation()
+    time.sleep(1)
     
     # Get joint positions
     print("\n🔧 UR10 Joint positions:")
@@ -173,31 +196,11 @@ try:
         except:
             print(f"  {joint_name}: not found")
     
+    sim.stopSimulation()
     sys.exit(0)
     
 except Exception as e:
     print(f"❌ Could not find UR10: {e}")
-    
-    # Method 2: Try to find any robot
-    print("\n🔍 Looking for any robot object...")
-    try:
-        # Get all objects by iterating through common handles
-        found_objects = []
-        for handle in [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]:
-            try:
-                name = sim.getObjectAlias(handle)
-                if name:
-                    found_objects.append((handle, name))
-                    print(f"  Handle {handle}: {name}")
-            except:
-                pass
-        
-        if not found_objects:
-            print("  No objects found")
-            
-    except Exception as e2:
-        print(f"Error listing objects: {e2}")
-    
     sys.exit(1)
 EOF
 
