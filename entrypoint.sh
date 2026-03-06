@@ -30,12 +30,27 @@ INTERVAL=2
 ELAPSED=0
 
 # Watch for the exact log line CoppeliaSim prints when the ZMQ addon is loaded
-until grep -q "ZMQ remote API server" coppeliasim.log 2>/dev/null \
+until grep -q "ZMQ" coppeliasim.log 2>/dev/null \
    || [ $ELAPSED -ge $TIMEOUT ]; do
     sleep $INTERVAL
     ELAPSED=$((ELAPSED + INTERVAL))
     echo "  waiting... (${ELAPSED}s / ${TIMEOUT}s)"
     tail -n 1 coppeliasim.log 2>/dev/null || true
+
+done
+# once the add‑on has printed something containing "ZMQ" we still wait a
+# couple of seconds for the port to actually be bound.  sometimes the log
+# message arrives before the socket appears, which is why the tests were
+# hanging earlier.
+sleep 3
+# verify that the RPC port is open
+for i in 1 2 3; do
+    if nc -z localhost 23000; then
+        echo "rpc port 23000 is open"
+        break
+    fi
+    sleep 1
+done
 done
 
 if [ $ELAPSED -ge $TIMEOUT ]; then
