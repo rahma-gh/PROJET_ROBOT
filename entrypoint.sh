@@ -49,37 +49,7 @@ fi
 echo "CoppeliaSim ZMQ server addon loaded. Waiting for scene to settle..."
 sleep 3
 
-echo "=== Running pytest ==="
+echo "=== CoppeliaSim is ready ==="
 
-export PYTHONPATH=/app
-
-if [ -d "/app/tests" ]; then
-    TEST_PATH="tests/"
-else
-    TEST_PATH="."
-fi
-
-pytest $TEST_PATH \
-    --html=report.html \
-    --self-contained-html \
-    --timeout=180 \
-    --timeout-method=thread \
-    -vv
-
-TEST_EXIT_CODE=$?
-
-echo "=== Stopping CoppeliaSim ==="
-
-kill -TERM $COPPELIA_PID 2>/dev/null || true
-timeout 8s wait $COPPELIA_PID 2>/dev/null || true
-
-if kill -0 $COPPELIA_PID 2>/dev/null; then
-    echo "CoppeliaSim still alive → force kill"
-    kill -KILL $COPPELIA_PID 2>/dev/null || true
-fi
-
-echo "=== Test finished with exit code $TEST_EXIT_CODE ==="
-echo "Last 20 lines of coppeliasim.log:"
-tail -n 20 coppeliasim.log
-
-exit $TEST_EXIT_CODE
+# Wait for CoppeliaSim to finish (keeps container running)
+wait $COPPELIA_PID
