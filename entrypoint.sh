@@ -2,7 +2,7 @@
 set -e
 
 echo "======================================"
-echo " Initializing environment - FINAL VERSION"
+echo " Initializing environment - ULTIMATE FIX"
 echo "======================================"
 echo "Current directory: $(pwd)"
 echo "User: $(whoami)"
@@ -35,38 +35,15 @@ echo "✅ Scene file found: /app/pick_and_place.ttt"
 ls -la /app/pick_and_place.ttt
 
 # ======================================
-# Create a simple keep-alive script
-# ======================================
-echo "======================================"
-echo " Creating keep-alive script"
-echo "======================================"
-
-cat > /tmp/keep_alive.lua << 'EOF'
--- Simple script to keep CoppeliaSim alive in headless mode
-function sysCall_init()
-    print("[KEEP_ALIVE] Starting keep-alive script")
-    -- Don't start simulation automatically, just keep the process alive
-end
-
-function sysCall_actuation()
-    -- This empty function keeps the script running
-    -- and prevents CoppeliaSim from exiting
-end
-
-function sysCall_sensing()
-    -- Also keep alive
-end
-EOF
-
-# ======================================
-# Start CoppeliaSim with your scene and keep-alive script
+# Start CoppeliaSim with your scene
 # ======================================
 echo "======================================"
 echo " Starting CoppeliaSim with your scene"
 echo "======================================"
 
-# Use -s to keep simulation running for a very long time (10^6 seconds ~ 11.5 days)
-COPPELIA_CMD="/opt/coppelia/coppeliaSim -h -s1000000 -GzmqRemoteApi.rpcPort=23000 -GzmqRemoteApi.cntPort=23001 /app/pick_and_place.ttt"
+# Use -s1 (simulate for 1 millisecond, just enough to initialize)
+# This will start the simulation briefly and then stop, but keep the process alive
+COPPELIA_CMD="/opt/coppelia/coppeliaSim -h -s1 -GzmqRemoteApi.rpcPort=23000 -GzmqRemoteApi.cntPort=23001 /app/pick_and_place.ttt"
 
 echo "Command: xvfb-run -a $COPPELIA_CMD"
 echo "Starting at: $(date)"
@@ -87,17 +64,30 @@ echo "======================================"
 TIMEOUT=120
 ELAPSED=0
 ZMQ_DETECTED=false
+SCENE_LOADED=false
 
 # Watch for the ZMQ addon loading
 while [ $ELAPSED -lt $TIMEOUT ]; do
     if grep -q "ZMQ remote API server" coppeliasim.log 2>/dev/null; then
-        echo "✅ ZMQ addon detected in log after ${ELAPSED}s"
-        ZMQ_DETECTED=true
+        if [ "$ZMQ_DETECTED" = false ]; then
+            echo "✅ ZMQ addon detected in log after ${ELAPSED}s"
+            ZMQ_DETECTED=true
+        fi
+    fi
+    
+    # Also check if scene is fully loaded
+    if grep -q "Simulation started" coppeliasim.log 2>/dev/null; then
+        if [ "$SCENE_LOADED" = false ]; then
+            echo "✅ Scene loaded and simulation started after ${ELAPSED}s"
+            SCENE_LOADED=true
+        fi
+    fi
+    
+    # Check if both conditions are met
+    if [ "$ZMQ_DETECTED" = true ] && [ "$SCENE_LOADED" = true ]; then
+        echo "✅ CoppeliaSim fully initialized after ${ELAPSED}s"
         break
     fi
-    sleep 2
-    ELAPSED=$((ELAPSED+2))
-    echo "  waiting for ZMQ addon... ${ELAPSED}s / ${TIMEOUT}s"
     
     # Check if process is still running
     if ! kill -0 $COPPELIA_PID 2>/dev/null; then
@@ -107,10 +97,14 @@ while [ $ELAPSED -lt $TIMEOUT ]; do
         echo "---------------------------"
         exit 1
     fi
+    
+    sleep 2
+    ELAPSED=$((ELAPSED+2))
+    echo "  waiting... ${ELAPSED}s / ${TIMEOUT}s"
 done
 
-if [ "$ZMQ_DETECTED" = false ]; then
-    echo "❌ ERROR: ZMQ addon never appeared in log"
+if [ "$ZMQ_DETECTED" = false ] || [ "$SCENE_LOADED" = false ]; then
+    echo "❌ ERROR: CoppeliaSim not fully initialized"
     cat coppeliasim.log
     exit 1
 fi
@@ -154,8 +148,8 @@ if [ "$PORT_READY" = false ]; then
     exit 1
 fi
 
-# Wait a bit more for the scene to fully load
-echo "Waiting for scene to fully load..."
+# Wait a bit more for everything to settle
+echo "Waiting for everything to settle..."
 sleep 5
 
 echo "======================================"
@@ -180,13 +174,8 @@ try:
     ur10_handle = sim.getObject('/UR10')
     print(f"✅ Found UR10 with handle: {ur10_handle}")
     
-    # Now start simulation (this is what your main.py does)
-    print("\n▶️ Starting simulation...")
-    sim.startSimulation()
-    time.sleep(2)
-    
-    # Get joint positions
-    print("\n🔧 UR10 Joint positions:")
+    # Get joint positions (simulation should be stopped after -s1)
+    print("\n🔧 UR10 Joint positions (simulation stopped):")
     joint_names = [
         'UR10_joint1', 'UR10_joint2', 'UR10_joint3', 
         'UR10_joint4', 'UR10_joint5', 'UR10_joint6'
@@ -206,6 +195,21 @@ try:
         print(f"\n✅ Found ConveyorSensor: {sensor}")
     except:
         print("\n⚠️ ConveyorSensor not found")
+    
+    # Now start simulation for testing (like your main.py does)
+    print("\n▶️ Starting simulation for testing...")
+    sim.startSimulation()
+    time.sleep(2)
+    
+    # Get joint positions during simulation
+    print("\n🔧 UR10 Joint positions (simulation running):")
+    for joint_name in joint_names:
+        try:
+            joint_handle = sim.getObject(f'/UR10/{joint_name}')
+            joint_pos = sim.getJointPosition(joint_handle)
+            print(f"  {joint_name}: {joint_pos}")
+        except Exception as e:
+            print(f"  {joint_name}: not found - {e}")
     
     # Stop simulation
     sim.stopSimulation()
