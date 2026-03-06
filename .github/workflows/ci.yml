@@ -1,69 +1,31 @@
 name: CPS CI Pipeline
 
 on:
-  push:
-    branches: [ develop ]
-  pull_request:
-    branches: [ develop ]
+ push:
+   branches: [ develop ]
+ pull_request:
+   branches: [ develop ]
 
 jobs:
-  build-and-test:
-    runs-on: ubuntu-22.04
+ build-and-test:
+   runs-on: ubuntu-22.04
 
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+   steps:
+     - name: Checkout code
+       uses: actions/checkout@v4
 
-      - name: Build Docker image
-        run: docker build -t cps-test-image .
+     - name: Build Docker image
+       run: docker build -t cps-test-image .
 
-      - name: Run tests inside container
-        run: |
-          mkdir -p output
-          # Don't override the command - let the container start normally
-          docker run --rm \
-            -v ${{ github.workspace }}/output:/app/output \
-            --name cps-test \
-            cps-test-image \
-            & # Run in background
-          
-          # Get the container ID
-          CONTAINER_ID=$(docker ps -q -f name=cps-test)
-          
-          # Wait for ZMQ server to be ready by checking inside the running container
-          echo '=== Waiting for ZMQ Remote API server to be ready ==='
-          for i in {1..120}; do
-            if docker exec $CONTAINER_ID nc -z localhost 23000 2>/dev/null; then
-              echo "ZMQ server is ready after $i seconds"
-              break
-            fi
-            echo "  waiting... (${i}s / 120s)"
-            sleep 1
-          done
-          
-          if [ $i -eq 120 ]; then
-            echo 'ZMQ server failed to start within 120 seconds'
-            docker exec $CONTAINER_ID ps aux | grep -i coppelia
-            docker exec $CONTAINER_ID cat /app/coppeliasim.log 2>/dev/null || echo 'Log file not found'
-            docker stop $CONTAINER_ID
-            exit 1
-          fi
-          
-          # Run pytest inside the container
-          echo '=== Running pytest ==='
-          docker exec $CONTAINER_ID pytest --timeout=180 --html=/app/output/report.html --self-contained-html
-          
-          # Store exit code
-          EXIT_CODE=$?
-          
-          # Stop the container
-          docker stop $CONTAINER_ID
-          
-          exit $EXIT_CODE
+     - name: Run tests inside container
+       run: |
+         mkdir -p output
+         docker run --rm \
+           -v ${{ github.workspace }}/output:/app/output \
+           cps-test-image
 
-      - name: Upload Test Report
-        uses: actions/upload-artifact@v4
-        with:
-          name: test-report
-          path: output/report.html
-        if: always()
+     - name: Upload Test Report
+       uses: actions/upload-artifact@v4
+       with:
+         name: test-report
+         path: report.html
