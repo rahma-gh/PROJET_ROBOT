@@ -73,7 +73,7 @@ while [ $ELAPSED -lt $TIMEOUT ]; do
     fi
     sleep 2
     ELAPSED=$((ELAPSED+2))
-    echo "  waiting... ${ELAPSED}s / ${TIMEOUT}s"
+    echo "  waiting for ZMQ addon... ${ELAPSED}s / ${TIMEOUT}s"
     
     # Show log tail every 20 seconds
     if [ $((ELAPSED % 20)) -eq 0 ]; then
@@ -100,30 +100,41 @@ echo "======================================"
 echo " Waiting for RPC port 23000"
 echo "======================================"
 
-# Wait for port to be open
-python3 << 'PY'
-import socket, time, sys
+# Wait for port to be open with retries
+PORT_TIMEOUT=30
+PORT_ELAPSED=0
+PORT_READY=false
 
-deadline = time.time() + 30
-while time.time() < deadline:
-    try:
-        s = socket.create_connection(("localhost", 23000), 2)
-        s.close()
-        print("✅ ZMQ RPC port is OPEN")
-        sys.exit(0)
-    except Exception:
-        time.sleep(1)
+while [ $PORT_ELAPSED -lt $PORT_TIMEOUT ]; do
+    if python3 -c "import socket; s=socket.socket(); s.settimeout(1); s.connect(('localhost', 23000)); s.close()" 2>/dev/null; then
+        echo "✅ ZMQ RPC port 23000 is OPEN after ${PORT_ELAPSED}s"
+        PORT_READY=true
+        break
+    fi
+    sleep 2
+    PORT_ELAPSED=$((PORT_ELAPSED+2))
+    echo "  waiting for port 23000... ${PORT_ELAPSED}s / ${PORT_TIMEOUT}s"
+    
+    # Show log tail occasionally
+    if [ $((PORT_ELAPSED % 10)) -eq 0 ]; then
+        echo "--- Recent log entries ---"
+        tail -5 coppeliasim.log
+        echo "--------------------------"
+    fi
+done
 
-print("❌ ERROR: rpc port 23000 never opened", file=sys.stderr)
-sys.exit(1)
-PY
-
-if [ $? -ne 0 ]; then
-    echo "❌ ZMQ connection failed"
-    cat coppeliasim.log
+if [ "$PORT_READY" = false ]; then
+    echo "❌ ERROR: rpc port 23000 never opened"
+    echo "--- Last 50 lines of log ---"
+    tail -50 coppeliasim.log
+    echo "---------------------------"
     kill -9 $COPPELIA_PID || true
     exit 1
 fi
+
+# Wait a bit more for the scene to fully load
+echo "Waiting for scene to fully load..."
+sleep 5
 
 echo "======================================"
 echo " Testing scene objects"
@@ -167,33 +178,22 @@ try:
 except Exception as e:
     print(f"❌ Could not find UR10: {e}")
     
-    # Method 2: List all objects to see what's available
-    print("\n🔍 Listing all objects in scene:")
-    # Try to get the scene object
+    # Method 2: Try to find any robot
+    print("\n🔍 Looking for any robot object...")
     try:
-        # Get all objects in the scene
-        all_objects = []
-        # Try to get objects by iterating through possible handles
-        for i in range(100):
+        # Get all objects by iterating through common handles
+        found_objects = []
+        for handle in [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]:
             try:
-                obj_name = sim.getObjectAlias(i)
-                if obj_name:
-                    all_objects.append((i, obj_name))
+                name = sim.getObjectAlias(handle)
+                if name:
+                    found_objects.append((handle, name))
+                    print(f"  Handle {handle}: {name}")
             except:
                 pass
         
-        if all_objects:
-            for handle, name in all_objects:
-                print(f"  Handle {handle}: {name}")
-        else:
-            print("  No objects found with handle iteration")
-            
-        # Try to get the conveyor sensor mentioned in main.py
-        try:
-            sensor = sim.getObject('/ConveyorSensor')
-            print(f"\n✅ Found ConveyorSensor: {sensor}")
-        except:
-            print("\n❌ ConveyorSensor not found")
+        if not found_objects:
+            print("  No objects found")
             
     except Exception as e2:
         print(f"Error listing objects: {e2}")
