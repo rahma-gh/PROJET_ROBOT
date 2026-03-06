@@ -5,10 +5,35 @@ from coppeliasim_zmqremoteapi_client import RemoteAPIClient
 from lib.ArmRobot import UniversalRobot
 
 
+# helper to wait until the ZMQ port is accepting connections
+import socket
+
+def wait_for_port(port, host='localhost', timeout=30):
+    """Block until a TCP port can be opened or the timeout expires."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            with socket.create_connection((host, port), 1):
+                return
+        except OSError:
+            time.sleep(0.5)
+    raise RuntimeError(f"port {port} not reachable after {timeout}s")
+
+
 @pytest.fixture(scope="module")
 def sim():
+    # the container entrypoint sets zmqRemoteApi.rpcPort=23000; make sure
+    # the server is actually listening before we try to talk to it.  the
+    # original test hung indefinitely because ``client.require('sim')``
+    # blocked waiting for a reply that never arrived.
+    wait_for_port(23000, timeout=60)
+
     client = RemoteAPIClient(host='localhost', port=23000)
-    sim = client.require('sim')
+    try:
+        sim = client.require('sim')
+    except Exception as exc:
+        pytest.fail(f"could not connect to CoppeliaSim ZMQ API: {exc}")
+
     print("→ Démarrage de la simulation CoppeliaSim...")
     sim.startSimulation()
     time.sleep(2.0)
