@@ -17,21 +17,19 @@ jobs:
       - name: Build Docker image
         run: docker build -t cps-test-image .
 
-      - name: Run tests inside container with port readiness check
+      - name: Run tests inside container
         run: |
           mkdir -p output
           docker run --rm \
             -v ${{ github.workspace }}/output:/app/output \
             cps-test-image \
             /bin/bash -c "
-              # Start CoppeliaSim in background
-              /app/start_coppeliasim.sh &
-              
-              # Wait for ZMQ server to be ready on port 23000
-              echo 'Waiting for ZMQ Remote API server to be ready...'
+              # CoppeliaSim is already started by the container's entrypoint
+              # Just wait for ZMQ server to be ready on port 23000
+              echo '=== Waiting for ZMQ Remote API server to be ready ==='
               for i in {1..120}; do
                 if nc -z localhost 23000 2>/dev/null; then
-                  echo 'ZMQ server is ready on port 23000 after '\$i' seconds'
+                  echo 'ZMQ server is ready after '\$i' seconds'
                   break
                 fi
                 echo '  waiting... ('\$i's / 120s)'
@@ -40,22 +38,26 @@ jobs:
               
               if [ \$i -eq 120 ]; then
                 echo 'ZMQ server failed to start within 120 seconds'
+                echo '=== Checking if CoppeliaSim is running ==='
+                ps aux | grep coppelia
+                echo '=== Last 50 lines of coppeliasim.log ==='
+                tail -50 /app/coppeliasim.log 2>/dev/null || echo 'Log file not found'
                 exit 1
               fi
               
-              # Additional small delay to ensure scene is settled
+              # Additional small delay to ensure scene is fully settled
+              echo 'Waiting 2 more seconds for scene to settle...'
               sleep 2
               
               # Run the tests
               echo '=== Running pytest ==='
-              pytest --timeout=180 --html=report.html --self-contained-html
+              cd /app
+              pytest --timeout=180 --html=report.html --self-contained-html -v
               
               # Store exit code
               EXIT_CODE=\$?
               
-              # Ensure CoppeliaSim is terminated
-              pkill -f coppeliaSim || true
-              
+              echo '=== Test execution completed with exit code: \$EXIT_CODE ==='
               exit \$EXIT_CODE
             "
 
