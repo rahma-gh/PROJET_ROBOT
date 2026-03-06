@@ -116,33 +116,59 @@ try:
     client = RemoteAPIClient()
     sim = client.require('sim')
     
-    # List all objects to verify the scene loaded correctly
-    print("\n🔍 Listing all objects in scene:")
-    objects = sim.getObjectChildren(sim.handle_scene)
-    for obj in objects:
-        name = sim.getObjectAlias(obj)
-        print(f"  - {name} (handle: {obj})")
+    print("\n🔍 Getting scene objects:")
     
-    # Check for UR10 specifically
-    try:
-        ur10_handle = sim.getObject('/UR10')
-        print(f"\n✅ UR10 found with handle: {ur10_handle}")
-        
-        # Get joint information
-        print("\n🔧 UR10 Joints:")
-        joint_handles = sim.getObjectChildren(ur10_handle)
-        for joint in joint_handles:
-            joint_name = sim.getObjectAlias(joint)
-            print(f"  - {joint_name}")
-        
-        sys.exit(0)
-    except Exception as e:
-        print(f"\n❌ UR10 not found: {e}")
-        print("This indicates the scene file might not contain a UR10 robot.")
-        sys.exit(1)
+    # Get all objects in the scene (different API for ZMQ)
+    # Method 1: Get objects by type
+    objects = sim.getObjects(0)  # 0 = all object types
+    print(f"Found {len(objects)} objects in scene")
+    
+    # List first 20 objects with their names
+    for i, obj in enumerate(objects[:20]):
+        name = sim.getObjectAlias(obj)
+        print(f"  {i}: {name} (handle: {obj})")
+    
+    # Check for UR10 specifically using different possible names
+    ur10_found = False
+    possible_names = ['UR10', 'UR10_robot', 'UR10Robot', 'ur10', '/UR10']
+    
+    for name in possible_names:
+        try:
+            ur10_handle = sim.getObject(name)
+            print(f"\n✅ Found UR10 with name '{name}' (handle: {ur10_handle})")
+            ur10_found = True
+            break
+        except:
+            continue
+    
+    if not ur10_found:
+        print("\n❌ UR10 not found with any common names")
+        print("Available objects in scene:")
+        # Try to get all objects and print their full paths
+        for obj in objects[:20]:
+            try:
+                path = sim.getObjectPath(obj)
+                print(f"  Object path: {path}")
+            except:
+                pass
+    
+    # Try to get object by type (if UR10 is a specific type)
+    print("\n🔍 Getting all robot objects:")
+    robot_handles = sim.getObjects(2)  # 2 = sim.object_robot_type
+    for robot in robot_handles:
+        robot_name = sim.getObjectAlias(robot)
+        print(f"  Found robot: {robot_name}")
+    
+    # Get simulation time to verify connection
+    sim_time = sim.getSimulationTime()
+    print(f"\n✅ Connection verified. Simulation time: {sim_time}")
+    
+    sys.exit(0 if ur10_found else 1)
         
 except Exception as e:
     print(f"❌ Error: {e}")
+    import traceback
+    traceback.print_exc()
     sys.exit(1)
 EOF
 
