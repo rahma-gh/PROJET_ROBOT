@@ -39,15 +39,6 @@ RUN wget https://downloads.coppeliarobotics.com/V4_6_0_rev18/CoppeliaSim_Edu_V4_
    && mv CoppeliaSim_Edu_V4_6_0_rev18_Ubuntu22_04 /opt/coppelia \
    && rm CoppeliaSim_Edu_V4_6_0_rev18_Ubuntu22_04.tar.xz
 
-# ===============================
-# Install ZMQ Remote API Addon
-# ===============================
-RUN wget https://github.com/CoppeliaRobotics/zmqRemoteApi/releases/download/v4.6.0/zmqRemoteApi_4.6.0.tar.gz \
-   && tar -xzf zmqRemoteApi_4.6.0.tar.gz \
-   && mkdir -p /opt/coppelia/addons \
-   && cp -r zmqRemoteApi /opt/coppelia/addons/ \
-   && rm zmqRemoteApi_4.6.0.tar.gz
-
 ENV COPPELIASIM_ROOT=/opt/coppelia
 ENV LD_LIBRARY_PATH=$COPPELIASIM_ROOT:$LD_LIBRARY_PATH
 ENV QT_QPA_PLATFORM=offscreen
