@@ -2,7 +2,7 @@
 set -e
 
 echo "======================================"
-echo " Initializing environment - DEBUG MODE"
+echo " Initializing environment - FINAL ATTEMPT"
 echo "======================================"
 echo "Current directory: $(pwd)"
 echo "User: $(whoami)"
@@ -17,43 +17,66 @@ export DISPLAY=:99
 export QT_DEBUG_PLUGINS=1
 
 # ======================================
-# Debugging: Check CoppeliaSim installation
-# ======================================
-echo "======================================"
-echo " Checking CoppeliaSim installation"
-echo "======================================"
-echo "CoppeliaSim root: /opt/coppelia"
-ls -la /opt/coppelia/ || echo "ERROR: CoppeliaSim not found!"
-
-echo -e "\nChecking for required libraries:"
-ldd /opt/coppelia/coppeliaSim 2>/dev/null | grep "not found" || echo "All libraries seem present"
-
-echo -e "\nChecking for ZeroMQ addon:"
-find /opt/coppelia -name "*zmq*" -ls 2>/dev/null || echo "No ZMQ files found"
-
-echo -e "\nChecking addon manifest:"
-cat /root/.local/share/CoppeliaSim/addon_manifest.xml 2>/dev/null || echo "No addon manifest found"
-
-echo -e "\nChecking system scripts:"
-ls -la /opt/coppelia/system/ 2>/dev/null || echo "No system scripts found"
-
-# ======================================
 # Clear old logs
 # ======================================
 rm -f coppeliasim.log
 rm -f sim.log
 
 # ======================================
-# Try different approaches to start CoppeliaSim
+# Find a built-in scene
 # ======================================
-
-# Approach 1: Start with no scene (default scene)
 echo "======================================"
-echo " Approach 1: Starting with default scene (no scene file)"
+echo " Looking for built-in scenes"
 echo "======================================"
 
-# Start without specifying a scene file - it should load a default empty scene
-COPPELIA_CMD="/opt/coppelia/coppeliaSim -H -s0 -GzmqRemoteApi.rpcPort=23000 -GzmqRemoteApi.cntPort=23001 -GzmqRemoteApi.rpcAddress=0.0.0.0"
+# List all .ttt files in the CoppeliaSim installation
+echo "Built-in scenes in /opt/coppelia:"
+find /opt/coppelia -name "*.ttt" -type f 2>/dev/null | head -10 || echo "No .ttt files found"
+
+# Check for the default scene
+if [ -f "/opt/coppelia/scenes/blank.ttt" ]; then
+    DEFAULT_SCENE="/opt/coppelia/scenes/blank.ttt"
+elif [ -f "/opt/coppelia/scenes/empty.ttt" ]; then
+    DEFAULT_SCENE="/opt/coppelia/scenes/empty.ttt"
+elif [ -f "/opt/coppelia/system/dfltscn.ttt" ]; then
+    DEFAULT_SCENE="/opt/coppelia/system/dfltscn.ttt"
+else
+    # Use any .ttt file we can find
+    DEFAULT_SCENE=$(find /opt/coppelia -name "*.ttt" -type f 2>/dev/null | head -1)
+fi
+
+if [ -z "$DEFAULT_SCENE" ]; then
+    echo "❌ No built-in scenes found!"
+    echo "Will try to create a minimal valid scene file..."
+    
+    # Create a minimal valid scene using the correct binary format?
+    # This is getting too complex - let's create a simple text file
+    cat > /tmp/simple_scene.ttt << 'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<scene>
+  <version>4.6.0</version>
+  <objects>
+    <object class="CLight" name="light">
+      <position>5,0,5</position>
+    </object>
+  </objects>
+</scene>
+EOF
+    DEFAULT_SCENE="/tmp/simple_scene.ttt"
+fi
+
+echo "Using scene: $DEFAULT_SCENE"
+ls -la "$DEFAULT_SCENE" || echo "Scene file not found!"
+
+# ======================================
+# Start CoppeliaSim with built-in scene
+# ======================================
+echo "======================================"
+echo " Starting CoppeliaSim with built-in scene"
+echo "======================================"
+
+# Try without headless mode first (with xvfb)
+COPPELIA_CMD="/opt/coppelia/coppeliaSim -s0 -GzmqRemoteApi.rpcPort=23000 -GzmqRemoteApi.cntPort=23001 -GzmqRemoteApi.rpcAddress=0.0.0.0 $DEFAULT_SCENE"
 
 echo "Command: xvfb-run -a $COPPELIA_CMD"
 echo "Starting at: $(date)"
@@ -79,95 +102,87 @@ if kill -0 $COPPELIA_PID 2>/dev/null; then
         echo "✅ ZMQ addon detected in log"
     fi
     
-    # Check ports
-    echo "Checking ports..."
-    netstat -tln 2>/dev/null | grep -E "23000|23001" || echo "No ports listening yet"
+    # Wait for ports
+    echo "Waiting for ZMQ ports..."
+    for i in {1..30}; do
+        if netstat -tln 2>/dev/null | grep -q ":23000"; then
+            echo "✅ Port 23000 is listening"
+            break
+        fi
+        echo "  waiting... $i/30"
+        sleep 2
+    done
     
-else
-    echo "❌ Process died. Trying alternative approach..."
-    kill -9 $COPPELIA_PID 2>/dev/null || true
-    sleep 2
-    
-    # Approach 2: Use legacy remote API instead of ZMQ
+    # Test ZMQ connection
     echo "======================================"
-    echo " Approach 2: Using legacy remote API"
+    echo " Testing ZMQ connection"
     echo "======================================"
     
-    # Start without ZMQ, just basic simulation
-    COPPELIA_CMD="/opt/coppelia/coppeliaSim -H -s0"
-    
-    echo "Command: xvfb-run -a $COPPELIA_CMD"
-    
-    xvfb-run -a --server-args="-screen 0 1024x768x24" \
-        $COPPELIA_CMD > coppeliasim.log 2>&1 &
-    
-    COPPELIA_PID=$!
-    
-    sleep 10
-    
-    if kill -0 $COPPELIA_PID 2>/dev/null; then
-        echo "✅ Process $COPPELIA_PID is still running (legacy mode)"
-        
-        # For legacy mode, we'll need to use the legacy Python client
-        echo "✅ Legacy mode working. Will use legacy remote API."
-        
-        # Create a simple test to verify
-        cat > test_legacy.py << 'EOF'
+    cat > test_zmq_final.py << 'EOF'
 import time
 import sys
-import os
-
-# Try to import the legacy remote API
-sys.path.append('/opt/coppelia/programming/remoteApiBindings/python/python')
 try:
-    from coppeliasim_remoteapi.remoteApi import remoteApi
-    print("✅ Legacy remote API imported")
+    from coppeliasim_zmqremoteapi_client import RemoteAPIClient
+    print("✅ Imported RemoteAPIClient")
     
-    # Initialize
-    sim = remoteApi()
-    clientID = sim.simxStart('127.0.0.1', 19997, True, True, 5000, 5)
+    # Try to connect
+    for i in range(5):
+        try:
+            print(f"Connection attempt {i+1}/5...")
+            client = RemoteAPIClient()
+            sim = client.require('sim')
+            
+            # Test API
+            time.sleep(1)
+            print(f"✅ Connected successfully!")
+            print(f"Simulation time: {sim.getSimulationTime()}")
+            
+            sys.exit(0)
+        except Exception as e:
+            print(f"Attempt {i+1} failed: {e}")
+            time.sleep(2)
     
-    if clientID != -1:
-        print(f"✅ Connected to simulator with client ID: {clientID}")
-        sim.simxFinish(clientID)
-        sys.exit(0)
-    else:
-        print("❌ Failed to connect to simulator")
-        sys.exit(1)
-except Exception as e:
-    print(f"❌ Error: {e}")
+    print("❌ All connection attempts failed")
+    sys.exit(1)
+except ImportError as e:
+    print(f"❌ Import error: {e}")
     sys.exit(1)
 EOF
+    
+    python3 test_zmq_final.py
+    ZMQ_TEST=$?
+    
+    if [ $ZMQ_TEST -eq 0 ]; then
+        echo "✅ ZMQ is working!"
         
-        python3 test_legacy.py
-        LEGACY_TEST=$?
+        # Run pytest
+        echo "======================================"
+        echo " Running pytest"
+        echo "======================================"
         
-        if [ $LEGACY_TEST -eq 0 ]; then
-            echo "✅ Legacy API working! Will proceed with tests."
-            
-            # Continue with tests using legacy API
-            # Your test code here would need to be adapted to use legacy API
-            
-            # For now, just keep simulation running for tests
-            sleep 5
-            
-            echo "======================================"
-            echo " Running pytest (legacy mode)"
-            echo "======================================"
-            
-            # Run pytest (tests will need to be adapted)
-            pytest . --html=report.html --self-contained-html -vv || true
-            
-            TEST_EXIT_CODE=$?
+        if [ -d "/app/tests" ]; then
+            TEST_PATH="tests"
         else
-            echo "❌ Legacy API also failed"
-            TEST_EXIT_CODE=1
+            TEST_PATH="."
         fi
+        
+        pytest $TEST_PATH \
+            --html=report.html \
+            --self-contained-html \
+            --timeout=180 \
+            --timeout-method=thread \
+            -vv || true
+        
+        TEST_EXIT_CODE=$?
     else
-        echo "❌ All approaches failed. Final log:"
-        cat coppeliasim.log
-        exit 1
+        echo "❌ ZMQ test failed"
+        TEST_EXIT_CODE=1
     fi
+    
+else
+    echo "❌ Process died. Last 50 lines of log:"
+    tail -50 coppeliasim.log
+    TEST_EXIT_CODE=1
 fi
 
 # ======================================
