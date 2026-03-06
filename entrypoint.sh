@@ -35,14 +35,38 @@ echo "✅ Scene file found: /app/pick_and_place.ttt"
 ls -la /app/pick_and_place.ttt
 
 # ======================================
-# Start CoppeliaSim with your scene
+# Create a simple keep-alive script
+# ======================================
+echo "======================================"
+echo " Creating keep-alive script"
+echo "======================================"
+
+cat > /tmp/keep_alive.lua << 'EOF'
+-- Simple script to keep CoppeliaSim alive in headless mode
+function sysCall_init()
+    print("[KEEP_ALIVE] Starting keep-alive script")
+    -- Don't start simulation automatically, just keep the process alive
+end
+
+function sysCall_actuation()
+    -- This empty function keeps the script running
+    -- and prevents CoppeliaSim from exiting
+end
+
+function sysCall_sensing()
+    -- Also keep alive
+end
+EOF
+
+# ======================================
+# Start CoppeliaSim with your scene and keep-alive script
 # ======================================
 echo "======================================"
 echo " Starting CoppeliaSim with your scene"
 echo "======================================"
 
-# IMPORTANT: Do NOT use -s0 flag! Let the Python code start the simulation
-COPPELIA_CMD="/opt/coppelia/coppeliaSim -h -GzmqRemoteApi.rpcPort=23000 -GzmqRemoteApi.cntPort=23001 /app/pick_and_place.ttt"
+# Use -s to keep simulation running for a very long time (10^6 seconds ~ 11.5 days)
+COPPELIA_CMD="/opt/coppelia/coppeliaSim -h -s1000000 -GzmqRemoteApi.rpcPort=23000 -GzmqRemoteApi.cntPort=23001 /app/pick_and_place.ttt"
 
 echo "Command: xvfb-run -a $COPPELIA_CMD"
 echo "Starting at: $(date)"
@@ -157,7 +181,7 @@ try:
     print(f"✅ Found UR10 with handle: {ur10_handle}")
     
     # Now start simulation (this is what your main.py does)
-    print("\n Starting simulation...")
+    print("\n▶️ Starting simulation...")
     sim.startSimulation()
     time.sleep(2)
     
@@ -176,6 +200,13 @@ try:
         except Exception as e:
             print(f"  {joint_name}: not found - {e}")
     
+    # Check conveyor sensor
+    try:
+        sensor = sim.getObject('/ConveyorSensor')
+        print(f"\n✅ Found ConveyorSensor: {sensor}")
+    except:
+        print("\n⚠️ ConveyorSensor not found")
+    
     # Stop simulation
     sim.stopSimulation()
     print("\n✅ Scene test passed!")
@@ -187,8 +218,8 @@ except Exception as e:
     # List all objects to help debug
     print("\n📋 Listing all objects in scene:")
     try:
-        # Try to get the scene root
-        for i in range(50):
+        # Get all objects
+        for i in range(100):
             try:
                 name = sim.getObjectAlias(i)
                 if name and name != "":
