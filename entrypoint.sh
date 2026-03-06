@@ -118,46 +118,54 @@ try:
     
     print("\n🔍 Getting scene objects:")
     
-    # Get all objects in the scene (different API for ZMQ)
-    # Method 1: Get objects by type
-    objects = sim.getObjects(0)  # 0 = all object types
+    # Method 1: Get all objects from the scene root
+    # First get the scene handle
+    scene_handle = sim.getObject('/')  # Root object handle
+    print(f"Scene root handle: {scene_handle}")
+    
+    # Get all children of the scene
+    objects = sim.getObjectChildren(scene_handle)
     print(f"Found {len(objects)} objects in scene")
     
-    # List first 20 objects with their names
-    for i, obj in enumerate(objects[:20]):
+    # List all objects with their names and types
+    print("\n📋 Objects in scene:")
+    for i, obj in enumerate(objects):
         name = sim.getObjectAlias(obj)
-        print(f"  {i}: {name} (handle: {obj})")
+        obj_type = sim.getObjectType(obj)
+        print(f"  {i}: {name} (handle: {obj}, type: {obj_type})")
     
-    # Check for UR10 specifically using different possible names
+    # Check for UR10 specifically
     ur10_found = False
     possible_names = ['UR10', 'UR10_robot', 'UR10Robot', 'ur10', '/UR10']
     
+    print("\n🔍 Searching for UR10 robot...")
     for name in possible_names:
         try:
             ur10_handle = sim.getObject(name)
-            print(f"\n✅ Found UR10 with name '{name}' (handle: {ur10_handle})")
+            print(f"✅ Found UR10 with name '{name}' (handle: {ur10_handle})")
             ur10_found = True
+            
+            # Get all joints of the UR10
+            print(f"\n🔧 UR10 Joints:")
+            joint_handles = sim.getObjectChildren(ur10_handle)
+            for joint in joint_handles:
+                joint_name = sim.getObjectAlias(joint)
+                joint_type = sim.getObjectType(joint)
+                if joint_type == 3:  # sim.object_joint_type = 3
+                    joint_pos = sim.getJointPosition(joint)
+                    print(f"  - {joint_name}: position = {joint_pos}")
             break
-        except:
+        except Exception as e:
+            print(f"  Not found as '{name}': {e}")
             continue
     
     if not ur10_found:
-        print("\n❌ UR10 not found with any common names")
-        print("Available objects in scene:")
-        # Try to get all objects and print their full paths
-        for obj in objects[:20]:
-            try:
-                path = sim.getObjectPath(obj)
-                print(f"  Object path: {path}")
-            except:
-                pass
-    
-    # Try to get object by type (if UR10 is a specific type)
-    print("\n🔍 Getting all robot objects:")
-    robot_handles = sim.getObjects(2)  # 2 = sim.object_robot_type
-    for robot in robot_handles:
-        robot_name = sim.getObjectAlias(robot)
-        print(f"  Found robot: {robot_name}")
+        print("\n❌ UR10 not found with common names")
+        print("\nAvailable objects in scene:")
+        for obj in objects:
+            name = sim.getObjectAlias(obj)
+            obj_type = sim.getObjectType(obj)
+            print(f"  - {name} (type: {obj_type})")
     
     # Get simulation time to verify connection
     sim_time = sim.getSimulationTime()
