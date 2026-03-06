@@ -41,8 +41,8 @@ echo "======================================"
 echo " Starting CoppeliaSim with your scene"
 echo "======================================"
 
-# Use -s0 to keep simulation running (like we had working before)
-COPPELIA_CMD="/opt/coppelia/coppeliaSim -h -s0 -GzmqRemoteApi.rpcPort=23000 -GzmqRemoteApi.cntPort=23001 /app/pick_and_place.ttt"
+# IMPORTANT: Do NOT use -s0 flag! Let the Python code start the simulation
+COPPELIA_CMD="/opt/coppelia/coppeliaSim -h -GzmqRemoteApi.rpcPort=23000 -GzmqRemoteApi.cntPort=23001 /app/pick_and_place.ttt"
 
 echo "Command: xvfb-run -a $COPPELIA_CMD"
 echo "Starting at: $(date)"
@@ -151,35 +151,15 @@ sim = client.require('sim')
 
 print("\n🔍 Looking for UR10 robot...")
 
-# First, list all top-level objects to see what's in the scene
-print("\n📋 Top-level objects in scene:")
-try:
-    # Get all objects
-    all_objects = []
-    for i in range(100):  # Check first 100 handles
-        try:
-            name = sim.getObjectAlias(i)
-            if name and name != "":
-                all_objects.append((i, name))
-                print(f"  Handle {i}: {name}")
-        except:
-            pass
-    
-    if not all_objects:
-        print("  No objects found")
-        
-except Exception as e:
-    print(f"Error listing objects: {e}")
-
-# Try to get UR10 directly
-print("\n🔍 Searching for UR10...")
+# Try to get UR10 directly (like in your main.py)
 try:
     ur10_handle = sim.getObject('/UR10')
     print(f"✅ Found UR10 with handle: {ur10_handle}")
     
-    # Start simulation to test robot movement
+    # Now start simulation (this is what your main.py does)
+    print("\n Starting simulation...")
     sim.startSimulation()
-    time.sleep(1)
+    time.sleep(2)
     
     # Get joint positions
     print("\n🔧 UR10 Joint positions:")
@@ -193,14 +173,32 @@ try:
             joint_handle = sim.getObject(f'/UR10/{joint_name}')
             joint_pos = sim.getJointPosition(joint_handle)
             print(f"  {joint_name}: {joint_pos}")
-        except:
-            print(f"  {joint_name}: not found")
+        except Exception as e:
+            print(f"  {joint_name}: not found - {e}")
     
+    # Stop simulation
     sim.stopSimulation()
+    print("\n✅ Scene test passed!")
     sys.exit(0)
     
 except Exception as e:
     print(f"❌ Could not find UR10: {e}")
+    
+    # List all objects to help debug
+    print("\n📋 Listing all objects in scene:")
+    try:
+        # Try to get the scene root
+        for i in range(50):
+            try:
+                name = sim.getObjectAlias(i)
+                if name and name != "":
+                    obj_type = sim.getObjectType(i)
+                    print(f"  Handle {i}: {name} (type: {obj_type})")
+            except:
+                pass
+    except Exception as e2:
+        print(f"Error listing objects: {e2}")
+    
     sys.exit(1)
 EOF
 
