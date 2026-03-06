@@ -2,7 +2,7 @@
 set -e
 
 echo "======================================"
-echo " Initializing environment - FINAL ATTEMPT"
+echo " Initializing environment - FINAL VERSION"
 echo "======================================"
 echo "Current directory: $(pwd)"
 echo "User: $(whoami)"
@@ -14,69 +14,35 @@ chmod 0700 "$XDG_RUNTIME_DIR"
 
 export PYTHONPATH=/app
 export DISPLAY=:99
-export QT_DEBUG_PLUGINS=1
 
 # ======================================
 # Clear old logs
 # ======================================
 rm -f coppeliasim.log
-rm -f sim.log
 
 # ======================================
-# Find a built-in scene
+# Check if the scene file exists
 # ======================================
 echo "======================================"
-echo " Looking for built-in scenes"
+echo " Checking scene file"
 echo "======================================"
-
-# List all .ttt files in the CoppeliaSim installation
-echo "Built-in scenes in /opt/coppelia:"
-find /opt/coppelia -name "*.ttt" -type f 2>/dev/null | head -10 || echo "No .ttt files found"
-
-# Check for the default scene
-if [ -f "/opt/coppelia/scenes/blank.ttt" ]; then
-    DEFAULT_SCENE="/opt/coppelia/scenes/blank.ttt"
-elif [ -f "/opt/coppelia/scenes/empty.ttt" ]; then
-    DEFAULT_SCENE="/opt/coppelia/scenes/empty.ttt"
-elif [ -f "/opt/coppelia/system/dfltscn.ttt" ]; then
-    DEFAULT_SCENE="/opt/coppelia/system/dfltscn.ttt"
-else
-    # Use any .ttt file we can find
-    DEFAULT_SCENE=$(find /opt/coppelia -name "*.ttt" -type f 2>/dev/null | head -1)
+if [ ! -f "/app/pick_and_place.ttt" ]; then
+    echo "❌ ERROR: Scene file /app/pick_and_place.ttt not found!"
+    ls -la /app/
+    exit 1
 fi
-
-if [ -z "$DEFAULT_SCENE" ]; then
-    echo "❌ No built-in scenes found!"
-    echo "Will try to create a minimal valid scene file..."
-    
-    # Create a minimal valid scene using the correct binary format?
-    # This is getting too complex - let's create a simple text file
-    cat > /tmp/simple_scene.ttt << 'EOF'
-<?xml version="1.0" encoding="UTF-8"?>
-<scene>
-  <version>4.6.0</version>
-  <objects>
-    <object class="CLight" name="light">
-      <position>5,0,5</position>
-    </object>
-  </objects>
-</scene>
-EOF
-    DEFAULT_SCENE="/tmp/simple_scene.ttt"
-fi
-
-echo "Using scene: $DEFAULT_SCENE"
-ls -la "$DEFAULT_SCENE" || echo "Scene file not found!"
+echo "✅ Scene file found: /app/pick_and_place.ttt"
+ls -la /app/pick_and_place.ttt
 
 # ======================================
-# Start CoppeliaSim with built-in scene
+# Start CoppeliaSim with your scene
 # ======================================
 echo "======================================"
-echo " Starting CoppeliaSim with built-in scene"
+echo " Starting CoppeliaSim with your scene"
 echo "======================================"
 
-# Try without headless mode first (with xvfb)
-COPPELIA_CMD="/opt/coppelia/coppeliaSim -s0 -GzmqRemoteApi.rpcPort=23000 -GzmqRemoteApi.cntPort=23001 -GzmqRemoteApi.rpcAddress=0.0.0.0 $DEFAULT_SCENE"
+# Use the scene file and enable ZMQ
+COPPELIA_CMD="/opt/coppelia/coppeliaSim -s0 -GzmqRemoteApi.rpcPort=23000 -GzmqRemoteApi.cntPort=23001 -GzmqRemoteApi.rpcAddress=0.0.0.0 /app/pick_and_place.ttt"
 
 echo "Command: xvfb-run -a $COPPELIA_CMD"
 echo "Starting at: $(date)"
@@ -91,99 +57,138 @@ echo "CoppeliaSim started with PID: $COPPELIA_PID"
 echo "Log file: coppeliasim.log"
 
 # Wait for process to initialize
+echo "Waiting for CoppeliaSim to initialize..."
 sleep 10
 
 # Check if process is still running
-if kill -0 $COPPELIA_PID 2>/dev/null; then
-    echo "✅ Process $COPPELIA_PID is still running"
-    
-    # Check if ZMQ initialized
-    if grep -q "ZMQ remote API server" coppeliasim.log; then
-        echo "✅ ZMQ addon detected in log"
+if ! kill -0 $COPPELIA_PID 2>/dev/null; then
+    echo "❌ ERROR: CoppeliaSim process died!"
+    echo "Last 50 lines of log:"
+    tail -50 coppeliasim.log
+    exit 1
+fi
+echo "✅ CoppeliaSim process is running"
+
+# ======================================
+# Wait for ZMQ ports
+# ======================================
+echo "======================================"
+echo " Waiting for ZMQ ports"
+echo "======================================"
+
+TIMEOUT=30
+ELAPSED=0
+while [ $ELAPSED -lt $TIMEOUT ]; do
+    if netstat -tln 2>/dev/null | grep -q ":23000"; then
+        echo "✅ Port 23000 is listening after ${ELAPSED}s"
+        break
     fi
-    
-    # Wait for ports
-    echo "Waiting for ZMQ ports..."
-    for i in {1..30}; do
-        if netstat -tln 2>/dev/null | grep -q ":23000"; then
-            echo "✅ Port 23000 is listening"
-            break
-        fi
-        echo "  waiting... $i/30"
-        sleep 2
-    done
-    
-    # Test ZMQ connection
-    echo "======================================"
-    echo " Testing ZMQ connection"
-    echo "======================================"
-    
-    cat > test_zmq_final.py << 'EOF'
+    echo "  waiting for port 23000... ${ELAPSED}s/${TIMEOUT}s"
+    sleep 2
+    ELAPSED=$((ELAPSED+2))
+done
+
+if [ $ELAPSED -ge $TIMEOUT ]; then
+    echo "❌ ERROR: Port 23000 never opened"
+    tail -50 coppeliasim.log
+    exit 1
+fi
+
+# Wait a bit more for the scene to fully load
+echo "Waiting for scene to fully load..."
+sleep 5
+
+# ======================================
+# Test ZMQ connection to the scene
+# ======================================
+echo "======================================"
+echo " Testing ZMQ connection to your scene"
+echo "======================================"
+
+cat > test_scene.py << 'EOF'
 import time
 import sys
 try:
     from coppeliasim_zmqremoteapi_client import RemoteAPIClient
     print("✅ Imported RemoteAPIClient")
     
-    # Try to connect
-    for i in range(5):
-        try:
-            print(f"Connection attempt {i+1}/5...")
-            client = RemoteAPIClient()
-            sim = client.require('sim')
-            
-            # Test API
-            time.sleep(1)
-            print(f"✅ Connected successfully!")
-            print(f"Simulation time: {sim.getSimulationTime()}")
-            
-            sys.exit(0)
-        except Exception as e:
-            print(f"Attempt {i+1} failed: {e}")
-            time.sleep(2)
+    # Connect to simulator
+    client = RemoteAPIClient()
+    sim = client.require('sim')
     
-    print("❌ All connection attempts failed")
-    sys.exit(1)
-except ImportError as e:
-    print(f"❌ Import error: {e}")
+    # List all objects to verify the scene loaded correctly
+    print("\n🔍 Listing all objects in scene:")
+    objects = sim.getObjectChildren(sim.handle_scene)
+    for obj in objects:
+        name = sim.getObjectAlias(obj)
+        print(f"  - {name} (handle: {obj})")
+    
+    # Check for UR10 specifically
+    try:
+        ur10_handle = sim.getObject('/UR10')
+        print(f"\n✅ UR10 found with handle: {ur10_handle}")
+        
+        # Get joint information
+        print("\n🔧 UR10 Joints:")
+        joint_handles = sim.getObjectChildren(ur10_handle)
+        for joint in joint_handles:
+            joint_name = sim.getObjectAlias(joint)
+            print(f"  - {joint_name}")
+        
+        sys.exit(0)
+    except Exception as e:
+        print(f"\n❌ UR10 not found: {e}")
+        print("This indicates the scene file might not contain a UR10 robot.")
+        sys.exit(1)
+        
+except Exception as e:
+    print(f"❌ Error: {e}")
     sys.exit(1)
 EOF
-    
-    python3 test_zmq_final.py
-    ZMQ_TEST=$?
-    
-    if [ $ZMQ_TEST -eq 0 ]; then
-        echo "✅ ZMQ is working!"
-        
-        # Run pytest
-        echo "======================================"
-        echo " Running pytest"
-        echo "======================================"
-        
-        if [ -d "/app/tests" ]; then
-            TEST_PATH="tests"
-        else
-            TEST_PATH="."
-        fi
-        
-        pytest $TEST_PATH \
-            --html=report.html \
-            --self-contained-html \
-            --timeout=180 \
-            --timeout-method=thread \
-            -vv || true
-        
-        TEST_EXIT_CODE=$?
-    else
-        echo "❌ ZMQ test failed"
-        TEST_EXIT_CODE=1
-    fi
-    
-else
-    echo "❌ Process died. Last 50 lines of log:"
-    tail -50 coppeliasim.log
-    TEST_EXIT_CODE=1
+
+python3 test_scene.py
+TEST_RESULT=$?
+
+if [ $TEST_RESULT -ne 0 ]; then
+    echo "⚠️  Scene test failed. Please check if your pick_and_place.ttt contains a UR10 robot."
+    echo "Continuing with tests anyway..."
 fi
+
+# ======================================
+# Run pytest
+# ======================================
+echo "======================================"
+echo " Running pytest"
+echo "======================================"
+
+if [ -d "/app/tests" ]; then
+    TEST_PATH="tests"
+else
+    TEST_PATH="."
+fi
+
+# Run tests
+pytest $TEST_PATH \
+    --html=report.html \
+    --self-contained-html \
+    --timeout=180 \
+    --timeout-method=thread \
+    -vv
+
+TEST_EXIT_CODE=$?
+
+# ======================================
+# Generate a summary
+# ======================================
+echo "======================================"
+echo " Test Summary"
+echo "======================================"
+echo "Exit code: $TEST_EXIT_CODE"
+echo ""
+echo "Last 20 lines of simulator log:"
+echo "--------------------------------"
+tail -20 coppeliasim.log
+echo "--------------------------------"
 
 # ======================================
 # Cleanup
@@ -196,8 +201,6 @@ kill -TERM $COPPELIA_PID 2>/dev/null || true
 sleep 5
 kill -9 $COPPELIA_PID 2>/dev/null || true
 
-echo "======================================"
-echo " Test run complete"
-echo "======================================"
+echo "✅ Done"
 
-exit ${TEST_EXIT_CODE:-0}
+exit $TEST_EXIT_CODE
