@@ -30,7 +30,7 @@ INTERVAL=2
 ELAPSED=0
 
 # Watch for the exact log line CoppeliaSim prints when the ZMQ addon is loaded
-until grep -q "ZMQ remote API server" coppeliasim.log 2>/dev/null \
+until grep -q "ZMQ server addon loaded" coppeliasim.log 2>/dev/null \
    || [ $ELAPSED -ge $TIMEOUT ]; do
     sleep $INTERVAL
     ELAPSED=$((ELAPSED + INTERVAL))
