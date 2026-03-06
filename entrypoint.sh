@@ -40,16 +40,15 @@ until grep -q "ZMQ" coppeliasim.log 2>/dev/null \
 done
 
 # once the add‑on has printed something containing "ZMQ" we still wait a
-# couple of seconds for the port to actually be bound.  sometimes the log
-# message arrives before the socket appears, which is why the tests were
-# hanging earlier.
-sleep 3
+# longer time for the port to actually be bound.  CoppeliaSim can take a while
+# to fully initialize the ZMQ server socket even after logging the startup message.
+sleep 10
 # verify that the RPC port is truly accessible using Python socket (same as pytest does)
 python3 << 'PYEOF'
 import socket
 import sys
 import time
-deadline = time.time() + 60
+deadline = time.time() + 120
 while time.time() < deadline:
     try:
         with socket.create_connection(('localhost', 23000), 1):
@@ -57,7 +56,7 @@ while time.time() < deadline:
             sys.exit(0)
     except OSError:
         time.sleep(0.5)
-print('ERROR: rpc port 23000 not reachable after 60s', file=sys.stderr)
+print('ERROR: rpc port 23000 not reachable after 120s', file=sys.stderr)
 sys.exit(1)
 PYEOF
 
