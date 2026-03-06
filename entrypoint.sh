@@ -32,6 +32,9 @@ cat /root/.local/share/CoppeliaSim/addon_manifest.xml 2>/dev/null || echo "No ad
 echo -e "\nChecking system scripts:"
 ls -la /opt/coppelia/system/ 2>/dev/null || echo "No system scripts found"
 
+echo -e "\nChecking scene file:"
+ls -la /app/pick_and_place.ttt 2>/dev/null || echo "WARNING: Scene file not found!"
+
 # ======================================
 # Clear old logs
 # ======================================
@@ -39,14 +42,19 @@ rm -f coppeliasim.log
 rm -f zmq_debug.log
 
 # ======================================
-# Start CoppeliaSim with verbose output
+# Start CoppeliaSim with correct arguments
 # ======================================
 echo "======================================"
 echo " Starting CoppeliaSim (headless debug mode)"
 echo "======================================"
 
-# Command to start CoppeliaSim
-COPPELIA_CMD="/opt/coppelia/coppeliaSim -h -GzmqRemoteApi.rpcPort=23000 -GzmqRemoteApi.cntPort=23001 -GzmqRemoteApi.rpcAddress=0.0.0.0 -s /app/pick_and_place.ttt"
+# IMPORTANT: -s requires a number (milliseconds to auto-stop)
+# For loading a scene, just provide the file path or use -f
+# Option 1: Just provide the scene file (simplest)
+COPPELIA_CMD="/opt/coppelia/coppeliaSim -h -GzmqRemoteApi.rpcPort=23000 -GzmqRemoteApi.cntPort=23001 -GzmqRemoteApi.rpcAddress=0.0.0.0 /app/pick_and_place.ttt"
+
+# Option 2: Use -f flag explicitly (alternative)
+# COPPELIA_CMD="/opt/coppelia/coppeliaSim -h -GzmqRemoteApi.rpcPort=23000 -GzmqRemoteApi.cntPort=23001 -GzmqRemoteApi.rpcAddress=0.0.0.0 -f /app/pick_and_place.ttt"
 
 echo "Command: xvfb-run -a $COPPELIA_CMD"
 echo "Starting at: $(date)"
@@ -60,15 +68,19 @@ COPPELIA_PID=$!
 echo "CoppeliaSim started with PID: $COPPELIA_PID"
 echo "Log file: coppeliasim.log"
 
-# Wait for process to start
+# Wait a moment for process to start
 sleep 3
 
 # Check if process is running
 if kill -0 $COPPELIA_PID 2>/dev/null; then
-    echo "Process $COPPELIA_PID is running"
+    echo "✅ Process $COPPELIA_PID is running"
 else
-    echo "ERROR: Process $COPPELIA_PID is NOT running!"
-    cat coppeliasim.log
+    echo "❌ ERROR: Process $COPPELIA_PID is NOT running!"
+    echo "Command used: $COPPELIA_CMD"
+    echo "----------------------------------------"
+    echo "First 50 lines of log:"
+    head -50 coppeliasim.log 2>/dev/null || echo "Log file not created"
+    echo "----------------------------------------"
     exit 1
 fi
 
@@ -102,7 +114,7 @@ check_log() {
 check_ports() {
     # Try using netstat
     if command -v netstat >/dev/null 2>&1; then
-        if netstat -tln | grep -q ":23000"; then
+        if netstat -tln 2>/dev/null | grep -q ":23000"; then
             echo "✅ Port 23000 is listening (via netstat)"
             return 0
         fi
@@ -110,7 +122,7 @@ check_ports() {
     
     # Try using ss
     if command -v ss >/dev/null 2>&1; then
-        if ss -tln | grep -q ":23000"; then
+        if ss -tln 2>/dev/null | grep -q ":23000"; then
             echo "✅ Port 23000 is listening (via ss)"
             return 0
         fi
@@ -119,10 +131,15 @@ check_ports() {
     # Try using Python
     python3 << 'EOF' 2>/dev/null
 import socket
-s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-result = s.connect_ex(('localhost', 23000))
-s.close()
-exit(0 if result == 0 else 1)
+import sys
+try:
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.settimeout(1)
+    result = s.connect_ex(('localhost', 23000))
+    s.close()
+    sys.exit(0 if result == 0 else 1)
+except:
+    sys.exit(1)
 EOF
     if [ $? -eq 0 ]; then
         echo "✅ Port 23000 is open (via Python)"
@@ -155,6 +172,15 @@ while [ $ELAPSED -lt $TIMEOUT ]; do
         ZMQ_DETECTED=true
         echo "✅ ZMQ ports detected at ${ELAPSED}s"
         break
+    fi
+    
+    # Check if process is still running
+    if ! kill -0 $COPPELIA_PID 2>/dev/null; then
+        echo "❌ ERROR: CoppeliaSim process died!"
+        echo "----------------------------------------"
+        cat coppeliasim.log
+        echo "----------------------------------------"
+        exit 1
     fi
     
     sleep 2
