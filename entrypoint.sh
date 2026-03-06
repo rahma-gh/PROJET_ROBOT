@@ -37,6 +37,8 @@ until grep -q "ZMQ" coppeliasim.log 2>/dev/null \
     echo "  waiting... (${ELAPSED}s / ${TIMEOUT}s)"
     tail -n 1 coppeliasim.log 2>/dev/null || true
 
+done
+
 # once the add‑on has printed something containing "ZMQ" we still wait a
 # couple of seconds for the port to actually be bound.  sometimes the log
 # message arrives before the socket appears, which is why the tests were
