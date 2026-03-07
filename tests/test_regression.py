@@ -26,12 +26,17 @@ def sim():
     # the server is actually listening before we try to talk to it.  the
     # original test hung indefinitely because ``client.require('sim')``
     # blocked waiting for a reply that never arrived.
-    wait_for_port(23000, timeout=60)
+    print("\n[DEBUG] Attempting to connect to ZMQ server at localhost:23000")
+    wait_for_port(23000, timeout=90)
 
+    print("[DEBUG] Port is open, now creating RemoteAPIClient...")
     client = RemoteAPIClient(host='localhost', port=23000)
     try:
+        print("[DEBUG] Requesting sim from RemoteAPIClient...")
         sim = client.require('sim')
+        print("[DEBUG] ✓ Successfully got sim object")
     except Exception as exc:
+        print(f"[DEBUG] ✗ Failed to get sim: {exc}")
         pytest.fail(f"could not connect to CoppeliaSim ZMQ API: {exc}")
 
     print("→ Démarrage de la simulation CoppeliaSim...")
