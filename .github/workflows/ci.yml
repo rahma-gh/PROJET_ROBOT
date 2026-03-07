@@ -28,4 +28,5 @@ jobs:
        uses: actions/upload-artifact@v4
        with:
          name: test-report
-         path: report.html
+         path: output/report.html
+       if: always()
