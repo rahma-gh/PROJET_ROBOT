@@ -2,7 +2,7 @@
 set -e
 
 echo "======================================"
-echo " Initializing environment - TRUE HEADLESS MODE"
+echo " Initializing environment - WITH KEEP-ALIVE SCRIPT"
 echo "======================================"
 echo "Current directory: $(pwd)"
 echo "User: $(whoami)"
@@ -35,14 +35,41 @@ echo "✅ Scene file found: /app/pick_and_place.ttt"
 ls -la /app/pick_and_place.ttt
 
 # ======================================
-# Start CoppeliaSim with true headless mode
+# Create a keep-alive script
 # ======================================
 echo "======================================"
-echo " Starting CoppeliaSim with true headless mode"
+echo " Creating keep-alive script"
 echo "======================================"
 
-# Use -H for true headless mode (uses coppeliaSimHeadless library)
-COPPELIA_CMD="/opt/coppelia/coppeliaSim -H -GzmqRemoteApi.rpcPort=23000 -GzmqRemoteApi.cntPort=23001 /app/pick_and_place.ttt"
+cat > /tmp/keep_alive.lua << 'EOF'
+-- This script keeps CoppeliaSim running indefinitely
+function sysCall_init()
+    print("[KEEP_ALIVE] Initialized")
+end
+
+function sysCall_actuation()
+    -- Do nothing, just keep running
+end
+
+function sysCall_sensing()
+    -- Do nothing, just keep running
+end
+
+-- This function is called when the script is unloaded
+function sysCall_cleanup()
+    print("[KEEP_ALIVE] Cleanup")
+end
+EOF
+
+# ======================================
+# Start CoppeliaSim with true headless mode and keep-alive script
+# ======================================
+echo "======================================"
+echo " Starting CoppeliaSim with keep-alive script"
+echo "======================================"
+
+# Use -H for true headless mode and load the keep-alive script
+COPPELIA_CMD="/opt/coppelia/coppeliaSim -H -GzmqRemoteApi.rpcPort=23000 -GzmqRemoteApi.cntPort=23001 -s /tmp/keep_alive.lua /app/pick_and_place.ttt"
 
 echo "Command: xvfb-run -a $COPPELIA_CMD"
 echo "Starting at: $(date)"
@@ -63,12 +90,27 @@ echo "======================================"
 TIMEOUT=120
 ELAPSED=0
 ZMQ_DETECTED=false
+KEEP_ALIVE_DETECTED=false
 
-# Watch for the ZMQ addon loading
+# Watch for the ZMQ addon loading and keep-alive script
 while [ $ELAPSED -lt $TIMEOUT ]; do
     if grep -q "ZMQ remote API server" coppeliasim.log 2>/dev/null; then
-        echo "✅ ZMQ addon detected in log after ${ELAPSED}s"
-        ZMQ_DETECTED=true
+        if [ "$ZMQ_DETECTED" = false ]; then
+            echo "✅ ZMQ addon detected in log after ${ELAPSED}s"
+            ZMQ_DETECTED=true
+        fi
+    fi
+    
+    if grep -q "KEEP_ALIVE] Initialized" coppeliasim.log 2>/dev/null; then
+        if [ "$KEEP_ALIVE_DETECTED" = false ]; then
+            echo "✅ Keep-alive script initialized after ${ELAPSED}s"
+            KEEP_ALIVE_DETECTED=true
+        fi
+    fi
+    
+    # Check if both conditions are met
+    if [ "$ZMQ_DETECTED" = true ] && [ "$KEEP_ALIVE_DETECTED" = true ]; then
+        echo "✅ CoppeliaSim fully initialized after ${ELAPSED}s"
         break
     fi
     
@@ -83,11 +125,11 @@ while [ $ELAPSED -lt $TIMEOUT ]; do
     
     sleep 2
     ELAPSED=$((ELAPSED+2))
-    echo "  waiting for ZMQ addon... ${ELAPSED}s / ${TIMEOUT}s"
+    echo "  waiting... ${ELAPSED}s / ${TIMEOUT}s"
 done
 
-if [ "$ZMQ_DETECTED" = false ]; then
-    echo "❌ ERROR: ZMQ addon never appeared in log"
+if [ "$ZMQ_DETECTED" = false ] || [ "$KEEP_ALIVE_DETECTED" = false ]; then
+    echo "❌ ERROR: CoppeliaSim not fully initialized"
     cat coppeliasim.log
     exit 1
 fi
@@ -102,7 +144,7 @@ PORT_ELAPSED=0
 PORT_READY=false
 
 while [ $PORT_ELAPSED -lt $PORT_TIMEOUT ]; do
-    if python3 -c "import socket; s=socket.socket(); s.settimeout(1); s.connect(('localhost', 23000)); s.close()" 2>/dev/null; then
+    if python3 -c "import socket; s=socket.socket(); s.settimeout(1); try: s.connect(('localhost', 23000)); s.close(); print('port open') except: exit(1)" 2>/dev/null; then
         echo "✅ ZMQ RPC port 23000 is OPEN after ${PORT_ELAPSED}s"
         PORT_READY=true
         break
@@ -159,11 +201,12 @@ try:
     
     # List all objects to verify scene loaded
     print("\n📋 Listing all objects in scene:")
-    for i in range(50):
+    # Try to get all objects via the scene root
+    scene_objects = sim.getObjects(0)  # 0 = all object types
+    for i, obj in enumerate(scene_objects[:20]):  # Show first 20
         try:
-            name = sim.getObjectAlias(i)
-            if name and name != "":
-                print(f"  Handle {i}: {name}")
+            name = sim.getObjectAlias(obj)
+            print(f"  Handle {obj}: {name}")
         except:
             pass
     
