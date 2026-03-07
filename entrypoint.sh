@@ -1,71 +1,96 @@
-import os
-import pytest
-import time
-from coppeliasim_zmqremoteapi_client import RemoteAPIClient
-from lib.ArmRobot import UniversalRobot
+#!/bin/bash
+set -e
 
+echo "=== Initializing environment ==="
 
-# helper to wait until the ZMQ port is accepting connections
-import socket
+export XDG_RUNTIME_DIR=/tmp/runtime-root
+mkdir -p "$XDG_RUNTIME_DIR"
+chmod 0700 "$XDG_RUNTIME_DIR"
 
-def wait_for_port(port, host='localhost', timeout=30):
-    """Block until a TCP port can be opened or the timeout expires."""
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        try:
-            with socket.create_connection((host, port), 1):
-                return
-        except OSError:
-            time.sleep(0.5)
-    raise RuntimeError(f"port {port} not reachable after {timeout}s")
+echo "=== Starting CoppeliaSim (headless mode) ==="
 
+# Start CoppeliaSim with ZMQ ports configured
+# Use -c flag to execute Lua command that starts the simulation
+xvfb-run --auto-servernum --server-args='-screen 0 1024x768x24' \
+  /opt/coppelia/coppeliaSim \
+    -H \
+    -c "sim.startSimulation()" \
+    -GzmqRemoteApi.rpcPort=23000 \
+    -GzmqRemoteApi.cntPort=23001 \
+    /app/pick_and_place.ttt > coppeliasim.log 2>&1 &
 
-@pytest.fixture(scope="module")
-def sim():
-    # the container entrypoint sets zmqRemoteApi.rpcPort=23000; make sure
-    # the server is actually listening before we try to talk to it.  the
-    # original test hung indefinitely because ``client.require('sim')``
-    # blocked waiting for a reply that never arrived.
-    print("\n[DEBUG] Attempting to connect to ZMQ server at localhost:23000")
-    wait_for_port(23000, timeout=90)
+COPPELIA_PID=$!
 
-    print("[DEBUG] Port is open, now creating RemoteAPIClient...")
-    client = RemoteAPIClient(host='localhost', port=23000)
-    try:
-        print("[DEBUG] Requesting sim from RemoteAPIClient...")
-        sim = client.require('sim')
-        print("[DEBUG] ✓ Successfully got sim object")
-    except Exception as exc:
-        print(f"[DEBUG] ✗ Failed to get sim: {exc}")
-        pytest.fail(f"could not connect to CoppeliaSim ZMQ API: {exc}")
+echo "CoppeliaSim launched (PID: $COPPELIA_PID)"
+echo "Log redirected to coppeliasim.log"
 
-    print("→ Démarrage de la simulation CoppeliaSim...")
-    sim.startSimulation()
-    time.sleep(2.0)
-    yield sim
-    print("→ Arrêt de la simulation CoppeliaSim...")
-    sim.stopSimulation()
-    time.sleep(0.5)
+echo "=== Waiting for ZMQ Remote API server to be ready ==="
 
+TIMEOUT=120
+ELAPSED=0
 
-def test_csv_presence():
-    assert os.path.exists('pallet_positions.csv'), "Fichier CSV manquant !"
+# Use the same connection test as pytest does (actually try to connect)
+while [ $ELAPSED -lt $TIMEOUT ]; do
+    if python3 -c "import socket; socket.create_connection(('localhost', 23000), timeout=1)" 2>/dev/null; then
+        echo "✓ Port 23000 is accepting connections!"
+        # Wait much longer to ensure the server is stable and ready for multiple connections
+        echo "  Waiting 15s for server to fully stabilize..."
+        sleep 15
+        echo "  CoppeliaSim ZMQ server should now be fully ready for all tests"
+        echo "ERROR: CoppeliaSim process exited unexpectedly!"
+        echo "=== CoppeliaSim Log ==="
+        cat coppeliasim.log
+        exit 1
+    fi
+done
 
+if [ $ELAPSED -ge $TIMEOUT ]; then
+    echo "ERROR: Port 23000 never opened after ${TIMEOUT}s"
+    echo "=== CoppeliaSim Log (last 100 lines) ==="
+    tail -n 100 coppeliasim.log
+    echo ""
+    echo "=== Checking if process is still running ==="
+    ps aux | grep coppeliaSim | grep -v grep || echo "CoppeliaSim process not found - it crashed!"
+    kill -TERM $COPPELIA_PID 2>/dev/null || true
+    exit 1
+fi
 
-def test_load_positions_format(sim):
-    from main import LoadPalletPosition
-    positions = LoadPalletPosition()
-    assert len(positions) > 0
-    assert len(positions[0]) == 6
+echo "=== CoppeliaSim is ready, Tests can now run ==="
 
+echo "=== Running pytest ==="
 
-def test_robot_and_scene(sim):
-    robot = UniversalRobot('UR10')
-    pos = robot.ReadPosition()
-    assert len(pos) == 6
+export PYTHONPATH=/app
 
+# Ensure output directory exists
+mkdir -p /app/output
 
-def test_gripper_init(sim):
-    robot = UniversalRobot('UR10')
-    robot.AttachGripper('vacuum_gripper')
-    assert robot.gripper is not None
+if [ -d "/app/tests" ]; then
+    TEST_PATH="tests/"
+else
+    TEST_PATH="."
+fi
+
+pytest $TEST_PATH \
+    --html=/app/output/report.html \
+    --self-contained-html \
+    --timeout=180 \
+    --timeout-method=thread \
+    -vv
+
+TEST_EXIT_CODE=$?
+
+echo "=== Stopping CoppeliaSim ==="
+
+kill -TERM $COPPELIA_PID 2>/dev/null || true
+timeout 8s wait $COPPELIA_PID 2>/dev/null || true
+
+if kill -0 $COPPELIA_PID 2>/dev/null; then
+    echo "CoppeliaSim still alive → force kill"
+    kill -KILL $COPPELIA_PID 2>/dev/null || true
+fi
+
+echo "=== Test finished with exit code $TEST_EXIT_CODE ==="
+echo "Last 20 lines of coppeliasim.log:"
+tail -n 20 coppeliasim.log
+
+exit $TEST_EXIT_CODE
