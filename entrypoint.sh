@@ -2,7 +2,7 @@
 set -e
 
 echo "======================================"
-echo " Initializing environment - WITH KEEP-ALIVE SCRIPT"
+echo " Initializing environment - FINAL FIX"
 echo "======================================"
 echo "Current directory: $(pwd)"
 echo "User: $(whoami)"
@@ -35,48 +35,52 @@ echo "✅ Scene file found: /app/pick_and_place.ttt"
 ls -la /app/pick_and_place.ttt
 
 # ======================================
-# Create a keep-alive script
+# Create a keep-alive script content
 # ======================================
 echo "======================================"
 echo " Creating keep-alive script"
 echo "======================================"
 
-cat > /tmp/keep_alive.lua << 'EOF'
--- This script keeps CoppeliaSim running indefinitely
+KEEP_ALIVE_SCRIPT=$(cat << 'EOF'
+-- Keep-alive script for headless mode
 function sysCall_init()
-    print("[KEEP_ALIVE] Initialized")
+    print("[KEEP_ALIVE] Initialized - keeping simulation alive")
 end
 
 function sysCall_actuation()
-    -- Do nothing, just keep running
+    -- This empty function keeps the script running
+    -- Do nothing, just prevent exit
 end
 
 function sysCall_sensing()
-    -- Do nothing, just keep running
+    -- Also keep alive
 end
 
--- This function is called when the script is unloaded
-function sysCall_cleanup()
-    print("[KEEP_ALIVE] Cleanup")
-end
+-- Don't exit
+return 0
 EOF
+)
+
+# Escape the script for command line
+KEEP_ALIVE_ESCAPED=$(echo "$KEEP_ALIVE_SCRIPT" | sed 's/"/\\"/g' | tr '\n' ' ')
 
 # ======================================
-# Start CoppeliaSim with true headless mode and keep-alive script
+# Start CoppeliaSim with your scene
 # ======================================
 echo "======================================"
-echo " Starting CoppeliaSim with keep-alive script"
+echo " Starting CoppeliaSim with your scene"
 echo "======================================"
 
-# Use -H for true headless mode and load the keep-alive script
-COPPELIA_CMD="/opt/coppelia/coppeliaSim -H -GzmqRemoteApi.rpcPort=23000 -GzmqRemoteApi.cntPort=23001 -s /tmp/keep_alive.lua /app/pick_and_place.ttt"
+# Use -c to execute the keep-alive script
+# The script will run in the sandbox and keep the simulation alive
+COPPELIA_CMD="/opt/coppelia/coppeliaSim -H -c \"$KEEP_ALIVE_ESCAPED\" -GzmqRemoteApi.rpcPort=23000 -GzmqRemoteApi.cntPort=23001 /app/pick_and_place.ttt"
 
 echo "Command: xvfb-run -a $COPPELIA_CMD"
 echo "Starting at: $(date)"
 
 # Start with xvfb
 xvfb-run -a --server-args="-screen 0 1024x768x24" \
-    $COPPELIA_CMD > coppeliasim.log 2>&1 &
+    /opt/coppelia/coppeliaSim -H -c "$KEEP_ALIVE_SCRIPT" -GzmqRemoteApi.rpcPort=23000 -GzmqRemoteApi.cntPort=23001 /app/pick_and_place.ttt > coppeliasim.log 2>&1 &
 
 COPPELIA_PID=$!
 
@@ -92,7 +96,7 @@ ELAPSED=0
 ZMQ_DETECTED=false
 KEEP_ALIVE_DETECTED=false
 
-# Watch for the ZMQ addon loading and keep-alive script
+# Watch for the ZMQ addon loading
 while [ $ELAPSED -lt $TIMEOUT ]; do
     if grep -q "ZMQ remote API server" coppeliasim.log 2>/dev/null; then
         if [ "$ZMQ_DETECTED" = false ]; then
@@ -144,7 +148,7 @@ PORT_ELAPSED=0
 PORT_READY=false
 
 while [ $PORT_ELAPSED -lt $PORT_TIMEOUT ]; do
-    if python3 -c "import socket; s=socket.socket(); s.settimeout(1); try: s.connect(('localhost', 23000)); s.close(); print('port open') except: exit(1)" 2>/dev/null; then
+    if python3 -c "import socket; s=socket.socket(); s.settimeout(1); s.connect(('localhost', 23000)); s.close(); print('port open')" 2>/dev/null; then
         echo "✅ ZMQ RPC port 23000 is OPEN after ${PORT_ELAPSED}s"
         PORT_READY=true
         break
@@ -198,17 +202,6 @@ try:
     # Get simulation time (this works even without simulation running)
     sim_time = sim.getSimulationTime()
     print(f"✅ Simulation time: {sim_time}")
-    
-    # List all objects to verify scene loaded
-    print("\n📋 Listing all objects in scene:")
-    # Try to get all objects via the scene root
-    scene_objects = sim.getObjects(0)  # 0 = all object types
-    for i, obj in enumerate(scene_objects[:20]):  # Show first 20
-        try:
-            name = sim.getObjectAlias(obj)
-            print(f"  Handle {obj}: {name}")
-        except:
-            pass
     
     print("\n✅ Basic connectivity test passed!")
     sys.exit(0)
@@ -274,13 +267,6 @@ try:
         except Exception as e:
             print(f"  {joint_name}: not found - {e}")
     
-    # Check conveyor sensor
-    try:
-        sensor = sim.getObject('/ConveyorSensor')
-        print(f"\n✅ Found ConveyorSensor: {sensor}")
-    except:
-        print("\n⚠️ ConveyorSensor not found")
-    
     # Stop simulation
     sim.stopSimulation()
     print("\n✅ UR10 test passed!")
@@ -288,6 +274,21 @@ try:
     
 except Exception as e:
     print(f"❌ Could not find UR10: {e}")
+    
+    # List all objects to help debug
+    print("\n📋 Listing all objects in scene:")
+    try:
+        # Try to get all objects
+        for i in range(100):
+            try:
+                name = sim.getObjectAlias(i)
+                if name and name != "":
+                    print(f"  Handle {i}: {name}")
+            except:
+                pass
+    except Exception as e2:
+        print(f"Error listing objects: {e2}")
+    
     sys.exit(1)
 EOF
 
