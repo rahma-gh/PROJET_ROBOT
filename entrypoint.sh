@@ -2,7 +2,7 @@
 set -e
 
 echo "======================================"
-echo " Initializing environment - ORIGINAL WORKING APPROACH"
+echo " Initializing environment - TRUE HEADLESS MODE"
 echo "======================================"
 echo "Current directory: $(pwd)"
 echo "User: $(whoami)"
@@ -35,14 +35,14 @@ echo "✅ Scene file found: /app/pick_and_place.ttt"
 ls -la /app/pick_and_place.ttt
 
 # ======================================
-# Start CoppeliaSim with your scene - EXACTLY like working example
+# Start CoppeliaSim with true headless mode
 # ======================================
 echo "======================================"
-echo " Starting CoppeliaSim with your scene"
+echo " Starting CoppeliaSim with true headless mode"
 echo "======================================"
 
-# Use EXACTLY the command from the working example - NO simulation flags
-COPPELIA_CMD="/opt/coppelia/coppeliaSim -h -GzmqRemoteApi.rpcPort=23000 -GzmqRemoteApi.cntPort=23001 /app/pick_and_place.ttt"
+# Use -H for true headless mode (uses coppeliaSimHeadless library)
+COPPELIA_CMD="/opt/coppelia/coppeliaSim -H -GzmqRemoteApi.rpcPort=23000 -GzmqRemoteApi.cntPort=23001 /app/pick_and_place.ttt"
 
 echo "Command: xvfb-run -a $COPPELIA_CMD"
 echo "Starting at: $(date)"
@@ -131,6 +131,10 @@ if [ "$PORT_READY" = false ]; then
     exit 1
 fi
 
+# Wait a bit more for everything to settle
+echo "Waiting for everything to settle..."
+sleep 3
+
 echo "======================================"
 echo " Testing basic connectivity"
 echo "======================================"
@@ -147,12 +151,21 @@ try:
     client = RemoteAPIClient()
     sim = client.require('sim')
     
-    # Just test basic connection - don't try to get objects yet
     print("✅ Connected to simulator")
     
     # Get simulation time (this works even without simulation running)
     sim_time = sim.getSimulationTime()
     print(f"✅ Simulation time: {sim_time}")
+    
+    # List all objects to verify scene loaded
+    print("\n📋 Listing all objects in scene:")
+    for i in range(50):
+        try:
+            name = sim.getObjectAlias(i)
+            if name and name != "":
+                print(f"  Handle {i}: {name}")
+        except:
+            pass
     
     print("\n✅ Basic connectivity test passed!")
     sys.exit(0)
@@ -177,10 +190,10 @@ if [ $BASIC_TEST -ne 0 ]; then
 fi
 
 echo "======================================"
-echo " Testing scene objects"
+echo " Testing UR10 robot"
 echo "======================================"
 
-cat > test_scene.py << 'EOF'
+cat > test_ur10.py << 'EOF'
 import time
 import sys
 from coppeliasim_zmqremoteapi_client import RemoteAPIClient
@@ -193,13 +206,18 @@ sim = client.require('sim')
 
 print("\n🔍 Looking for UR10 robot...")
 
-# Try to get UR10 directly (like in your main.py)
+# Try to get UR10 directly
 try:
     ur10_handle = sim.getObject('/UR10')
     print(f"✅ Found UR10 with handle: {ur10_handle}")
     
-    # List all joints of UR10
-    print("\n🔧 UR10 Joints:")
+    # Now start simulation to test robot movement
+    print("\n▶️ Starting simulation...")
+    sim.startSimulation()
+    time.sleep(2)
+    
+    # Get joint positions
+    print("\n🔧 UR10 Joint positions:")
     joint_names = [
         'UR10_joint1', 'UR10_joint2', 'UR10_joint3', 
         'UR10_joint4', 'UR10_joint5', 'UR10_joint6'
@@ -208,9 +226,10 @@ try:
     for joint_name in joint_names:
         try:
             joint_handle = sim.getObject(f'/UR10/{joint_name}')
-            print(f"  ✅ {joint_name}: handle {joint_handle}")
+            joint_pos = sim.getJointPosition(joint_handle)
+            print(f"  {joint_name}: {joint_pos}")
         except Exception as e:
-            print(f"  ❌ {joint_name}: not found")
+            print(f"  {joint_name}: not found - {e}")
     
     # Check conveyor sensor
     try:
@@ -219,7 +238,9 @@ try:
     except:
         print("\n⚠️ ConveyorSensor not found")
     
-    print("\n✅ Scene test passed!")
+    # Stop simulation
+    sim.stopSimulation()
+    print("\n✅ UR10 test passed!")
     sys.exit(0)
     
 except Exception as e:
@@ -227,11 +248,11 @@ except Exception as e:
     sys.exit(1)
 EOF
 
-python3 test_scene.py
+python3 test_ur10.py
 TEST_RESULT=$?
 
 if [ $TEST_RESULT -ne 0 ]; then
-    echo "⚠️  Scene test failed. Please check if your pick_and_place.ttt contains a UR10 robot."
+    echo "⚠️  UR10 test failed. Please check if your pick_and_place.ttt contains a UR10 robot."
     echo "Continuing with tests anyway..."
 fi
 
