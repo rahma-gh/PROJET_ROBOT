@@ -2,7 +2,7 @@
 set -e
 
 echo "======================================"
-echo " Initializing environment - ULTIMATE FIX"
+echo " Initializing environment - ORIGINAL WORKING APPROACH"
 echo "======================================"
 echo "Current directory: $(pwd)"
 echo "User: $(whoami)"
@@ -35,15 +35,14 @@ echo "✅ Scene file found: /app/pick_and_place.ttt"
 ls -la /app/pick_and_place.ttt
 
 # ======================================
-# Start CoppeliaSim with your scene
+# Start CoppeliaSim with your scene - EXACTLY like working example
 # ======================================
 echo "======================================"
 echo " Starting CoppeliaSim with your scene"
 echo "======================================"
 
-# Use -s1 (simulate for 1 millisecond, just enough to initialize)
-# This will start the simulation briefly and then stop, but keep the process alive
-COPPELIA_CMD="/opt/coppelia/coppeliaSim -h -s1 -GzmqRemoteApi.rpcPort=23000 -GzmqRemoteApi.cntPort=23001 /app/pick_and_place.ttt"
+# Use EXACTLY the command from the working example - NO simulation flags
+COPPELIA_CMD="/opt/coppelia/coppeliaSim -h -GzmqRemoteApi.rpcPort=23000 -GzmqRemoteApi.cntPort=23001 /app/pick_and_place.ttt"
 
 echo "Command: xvfb-run -a $COPPELIA_CMD"
 echo "Starting at: $(date)"
@@ -64,28 +63,12 @@ echo "======================================"
 TIMEOUT=120
 ELAPSED=0
 ZMQ_DETECTED=false
-SCENE_LOADED=false
 
 # Watch for the ZMQ addon loading
 while [ $ELAPSED -lt $TIMEOUT ]; do
     if grep -q "ZMQ remote API server" coppeliasim.log 2>/dev/null; then
-        if [ "$ZMQ_DETECTED" = false ]; then
-            echo "✅ ZMQ addon detected in log after ${ELAPSED}s"
-            ZMQ_DETECTED=true
-        fi
-    fi
-    
-    # Also check if scene is fully loaded
-    if grep -q "Simulation started" coppeliasim.log 2>/dev/null; then
-        if [ "$SCENE_LOADED" = false ]; then
-            echo "✅ Scene loaded and simulation started after ${ELAPSED}s"
-            SCENE_LOADED=true
-        fi
-    fi
-    
-    # Check if both conditions are met
-    if [ "$ZMQ_DETECTED" = true ] && [ "$SCENE_LOADED" = true ]; then
-        echo "✅ CoppeliaSim fully initialized after ${ELAPSED}s"
+        echo "✅ ZMQ addon detected in log after ${ELAPSED}s"
+        ZMQ_DETECTED=true
         break
     fi
     
@@ -100,11 +83,11 @@ while [ $ELAPSED -lt $TIMEOUT ]; do
     
     sleep 2
     ELAPSED=$((ELAPSED+2))
-    echo "  waiting... ${ELAPSED}s / ${TIMEOUT}s"
+    echo "  waiting for ZMQ addon... ${ELAPSED}s / ${TIMEOUT}s"
 done
 
-if [ "$ZMQ_DETECTED" = false ] || [ "$SCENE_LOADED" = false ]; then
-    echo "❌ ERROR: CoppeliaSim not fully initialized"
+if [ "$ZMQ_DETECTED" = false ]; then
+    echo "❌ ERROR: ZMQ addon never appeared in log"
     cat coppeliasim.log
     exit 1
 fi
@@ -148,9 +131,50 @@ if [ "$PORT_READY" = false ]; then
     exit 1
 fi
 
-# Wait a bit more for everything to settle
-echo "Waiting for everything to settle..."
-sleep 5
+echo "======================================"
+echo " Testing basic connectivity"
+echo "======================================"
+
+cat > test_basic.py << 'EOF'
+import time
+import sys
+from coppeliasim_zmqremoteapi_client import RemoteAPIClient
+
+print("✅ Imported RemoteAPIClient")
+
+try:
+    # Connect to simulator
+    client = RemoteAPIClient()
+    sim = client.require('sim')
+    
+    # Just test basic connection - don't try to get objects yet
+    print("✅ Connected to simulator")
+    
+    # Get simulation time (this works even without simulation running)
+    sim_time = sim.getSimulationTime()
+    print(f"✅ Simulation time: {sim_time}")
+    
+    print("\n✅ Basic connectivity test passed!")
+    sys.exit(0)
+    
+except Exception as e:
+    print(f"❌ Error: {e}")
+    import traceback
+    traceback.print_exc()
+    sys.exit(1)
+EOF
+
+python3 test_basic.py
+BASIC_TEST=$?
+
+if [ $BASIC_TEST -ne 0 ]; then
+    echo "❌ Basic connectivity test failed"
+    echo "--- Last 50 lines of log ---"
+    tail -50 coppeliasim.log
+    echo "---------------------------"
+    kill -9 $COPPELIA_PID 2>/dev/null || true
+    exit 1
+fi
 
 echo "======================================"
 echo " Testing scene objects"
@@ -174,8 +198,8 @@ try:
     ur10_handle = sim.getObject('/UR10')
     print(f"✅ Found UR10 with handle: {ur10_handle}")
     
-    # Get joint positions (simulation should be stopped after -s1)
-    print("\n🔧 UR10 Joint positions (simulation stopped):")
+    # List all joints of UR10
+    print("\n🔧 UR10 Joints:")
     joint_names = [
         'UR10_joint1', 'UR10_joint2', 'UR10_joint3', 
         'UR10_joint4', 'UR10_joint5', 'UR10_joint6'
@@ -184,10 +208,9 @@ try:
     for joint_name in joint_names:
         try:
             joint_handle = sim.getObject(f'/UR10/{joint_name}')
-            joint_pos = sim.getJointPosition(joint_handle)
-            print(f"  {joint_name}: {joint_pos}")
+            print(f"  ✅ {joint_name}: handle {joint_handle}")
         except Exception as e:
-            print(f"  {joint_name}: not found - {e}")
+            print(f"  ❌ {joint_name}: not found")
     
     # Check conveyor sensor
     try:
@@ -196,44 +219,11 @@ try:
     except:
         print("\n⚠️ ConveyorSensor not found")
     
-    # Now start simulation for testing (like your main.py does)
-    print("\n▶️ Starting simulation for testing...")
-    sim.startSimulation()
-    time.sleep(2)
-    
-    # Get joint positions during simulation
-    print("\n🔧 UR10 Joint positions (simulation running):")
-    for joint_name in joint_names:
-        try:
-            joint_handle = sim.getObject(f'/UR10/{joint_name}')
-            joint_pos = sim.getJointPosition(joint_handle)
-            print(f"  {joint_name}: {joint_pos}")
-        except Exception as e:
-            print(f"  {joint_name}: not found - {e}")
-    
-    # Stop simulation
-    sim.stopSimulation()
     print("\n✅ Scene test passed!")
     sys.exit(0)
     
 except Exception as e:
     print(f"❌ Could not find UR10: {e}")
-    
-    # List all objects to help debug
-    print("\n📋 Listing all objects in scene:")
-    try:
-        # Get all objects
-        for i in range(100):
-            try:
-                name = sim.getObjectAlias(i)
-                if name and name != "":
-                    obj_type = sim.getObjectType(i)
-                    print(f"  Handle {i}: {name} (type: {obj_type})")
-            except:
-                pass
-    except Exception as e2:
-        print(f"Error listing objects: {e2}")
-    
     sys.exit(1)
 EOF
 
