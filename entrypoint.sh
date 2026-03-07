@@ -34,7 +34,7 @@ until grep -q "ZMQ remote API server" coppeliasim.log 2>/dev/null \
    || [ $ELAPSED -ge $TIMEOUT ]; do
     sleep $INTERVAL
     ELAPSED=$((ELAPSED + INTERVAL))
-    echo "  waiting... (${ELAPSED}s / ${TIMEOUT}s)"
+    echo "  waiting for log... (${ELAPSED}s / ${TIMEOUT}s)"
     tail -n 1 coppeliasim.log 2>/dev/null || true
 done
 
@@ -45,8 +45,34 @@ if [ $ELAPSED -ge $TIMEOUT ]; then
     exit 1
 fi
 
-echo "CoppeliaSim ZMQ server addon loaded. Waiting for scene to settle..."
-sleep 3
+echo "Log message found. Now waiting for port 23000 to be open..."
+sleep 5
+
+# Verify the port is actually open using netstat/lsof
+ELAPSED=0
+until netstat -tln | grep -q ":23000" 2>/dev/null \
+   || lsof -i :23000 2>/dev/null | grep -q LISTEN \
+   || [ $ELAPSED -ge 60 ]; do
+    sleep 1
+    ELAPSED=$((ELAPSED + 1))
+    if [ $((ELAPSED % 5)) -eq 0 ]; then
+        echo "  waiting for port... (${ELAPSED}s / 60s)"
+    fi
+done
+
+if [ $ELAPSED -ge 60 ]; then
+    echo "ERROR: Port 23000 never opened after 60s"
+    echo "CoppeliaSim process info:"
+    ps aux | grep coppeliaSim | grep -v grep || true
+    echo "Network status:"
+    netstat -tln | grep 23000 || echo "Port 23000 not in netstat"
+    tail -n 40 coppeliasim.log
+    kill -TERM $COPPELIA_PID 2>/dev/null || true
+    exit 1
+fi
+
+echo "Port 23000 is now open and accepting connections!"
+sleep 2
 
 echo "=== Running pytest ==="
 
