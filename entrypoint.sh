@@ -27,16 +27,18 @@ echo "Log redirected to coppeliasim.log"
 echo "=== Waiting for ZMQ Remote API server to be ready ==="
 
 TIMEOUT=120
-INTERVAL=2
 ELAPSED=0
 
-# Verify the port is open using netstat/lsof with retries
-until netstat -tln 2>/dev/null | grep -q ":23000" \
-   || lsof -i :23000 2>/dev/null | grep -q LISTEN \
-   || [ $ELAPSED -ge $TIMEOUT ]; do
-    sleep $INTERVAL
-    ELAPSED=$((ELAPSED + INTERVAL))
-    echo "  waiting for port 23000... (${ELAPSED}s / ${TIMEOUT}s)"
+# Use the same connection test as pytest does (actually try to connect)
+while [ $ELAPSED -lt $TIMEOUT ]; do
+    if python3 -c "import socket; socket.create_connection(('localhost', 23000), timeout=1)" 2>/dev/null; then
+        echo "✓ Port 23000 is accepting connections!"
+        break
+    fi
+    
+    sleep 2
+    ELAPSED=$((ELAPSED + 2))
+    echo "  waiting for connection... (${ELAPSED}s / ${TIMEOUT}s)"
     
     # Check if process is still alive
     if ! kill -0 $COPPELIA_PID 2>/dev/null; then
@@ -49,19 +51,12 @@ done
 
 if [ $ELAPSED -ge $TIMEOUT ]; then
     echo "ERROR: Port 23000 never opened after ${TIMEOUT}s"
-    echo "=== CoppeliaSim Process Status ==="
-    ps aux | grep coppeliaSim | grep -v grep || echo "No CoppeliaSim process found"
-    echo ""
-    echo "=== Network Status ==="
-    netstat -tln | grep -E "(23000|23001)" || echo "Ports 23000/23001 not in netstat"
-    echo ""
     echo "=== CoppeliaSim Log (last 50 lines) ==="
     tail -n 50 coppeliasim.log
     kill -TERM $COPPELIA_PID 2>/dev/null || true
     exit 1
 fi
 
-echo "✓ Port 23000 is open and accepting connections!"
 sleep 2
 
 echo "=== Running pytest ==="
