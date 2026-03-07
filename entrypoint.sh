@@ -9,14 +9,14 @@ chmod 0700 "$XDG_RUNTIME_DIR"
 
 echo "=== Starting CoppeliaSim (headless mode) ==="
 
-# Start CoppeliaSim in headless mode with ZMQ ports configured
-# Use -s flag to auto-start the simulation (keeps it running)
+# Start CoppeliaSim with ZMQ ports configured
+# Use -c flag to execute Lua command that starts the simulation
 xvfb-run --auto-servernum --server-args='-screen 0 1024x768x24' \
   /opt/coppelia/coppeliaSim \
     -H \
-    -s \
-    -G zmqRemoteApi.rpcPort=23000 \
-    -G zmqRemoteApi.cntPort=23001 \
+    -c "sim.startSimulation()" \
+    -GzmqRemoteApi.rpcPort=23000 \
+    -GzmqRemoteApi.cntPort=23001 \
     /app/pick_and_place.ttt > coppeliasim.log 2>&1 &
 
 COPPELIA_PID=$!
