@@ -9,12 +9,25 @@ from lib.interpolation import linear_interpolation, joint_interpolation
 from lib.homogeneous_transform import *
 import numpy as np
 
+# Global client to reuse connections
+_global_client = None
+_global_sim = None
+_global_simIK = None
+
+def _get_or_create_client():
+    """Reuse the global client if available, otherwise create a new one."""
+    global _global_client, _global_sim, _global_simIK
+    if _global_client is None:
+        _global_client = RemoteAPIClient()
+        _global_sim = _global_client.require('sim')
+        _global_simIK = _global_client.require('simIK')
+    return _global_sim, _global_simIK
+
 # Universal Robot Class
 class UniversalRobot:
     def __init__(self, robot_name):
-        client = RemoteAPIClient()
-        self.sim = client.require('sim')
-        self.simIK = client.require('simIK')
+        # Reuse global client instead of creating a new one
+        self.sim, self.simIK = _get_or_create_client()
         self.robotName = robot_name
 
         # Initialize robot arm
