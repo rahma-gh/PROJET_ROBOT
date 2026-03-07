@@ -7,18 +7,25 @@ from lib.ArmRobot import UniversalRobot, Gripper
 import time
 import csv
 
-# Initialize Coppeliasim Remote API Client
-client = RemoteAPIClient()
-sim = client.require('sim')
+# Module-level variables initialized lazily
+client = None
+sim = None
+armRobot = None
 
-# Initialize the UR10 robot and attach the vacuum gripper
-armRobot = UniversalRobot('UR10')
-armRobot.AttachGripper('vacuum_gripper')
+def initialize_robot():
+    """Initialize CoppeliaSim client, sim, and robot. Called only when needed."""
+    global client, sim, armRobot
+    if client is None:
+        client = RemoteAPIClient()
+        sim = client.require('sim')
+        armRobot = UniversalRobot('UR10')
+        armRobot.AttachGripper('vacuum_gripper')
 
 
 # Automatically Record the pallet positions
 # ------------------------------------------------------------------------ #
 def SavePalletPosition():
+    initialize_robot()
     with open('pallet_positions.csv', mode='w',newline='') as file:
         writer = csv.writer(file)
         height = 0
@@ -104,6 +111,7 @@ def putObjectToPallet(count, palletPos):
 
     
 def record_positions():
+    initialize_robot()
     sim.startSimulation()
     SavePalletPosition()
     targetPositions = LoadPalletPosition()
@@ -112,6 +120,7 @@ def record_positions():
 
 
 def set_hydrolic_position(height):
+    initialize_robot()
     sim.startSimulation()
     slider = sim.getObject('/ur10_hydrolic/slider')    
     sim.setJointTargetPosition(slider, height/1000)
@@ -122,6 +131,7 @@ def set_hydrolic_position(height):
 # Main function
 # ------------------------------------------------------------------------ #
 def main2():
+    initialize_robot()
     sim.startSimulation()
 
     # Get proximity sensor handle to detect the incoming object
@@ -176,6 +186,7 @@ def main2():
 
 
 def main():
+    initialize_robot()
     sim.startSimulation()
     speed = 100
     pos1 = [570, 0, 87, 180, 0, 90]
