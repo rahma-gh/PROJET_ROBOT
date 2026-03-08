@@ -62,40 +62,45 @@ COPY . .
 # Setup models and dependencies
 # ===============================
 RUN mkdir -p /opt/coppelia/models && \
-    mkdir -p /app/models && \
-    echo "Creating EfficientConveyor customization model..." && \
-    cat > /opt/coppelia/models/efficientconveyor_customization-3.lua << 'EOF'
--- EfficientConveyor Customization Model (V3)
--- Auto-generated for Docker compatibility
+    mkdir -p /app/models
 
-function getOutletPositions()
-    return {}
-end
+# Create the EfficientConveyor customization model file using printf (more reliable)
+RUN printf '%s\n' \
+    '-- EfficientConveyor Customization Model (V3)' \
+    '-- Auto-generated for Docker compatibility' \
+    '' \
+    'function getOutletPositions()' \
+    '    return {}' \
+    'end' \
+    '' \
+    'function getInletPositions()' \
+    '    return {}' \
+    'end' \
+    '' \
+    'function getStackPositions()' \
+    '    return {}' \
+    'end' \
+    '' \
+    'function getScaleInfo()' \
+    '    return {' \
+    '        width = 0.5,' \
+    '        depth = 0.5,' \
+    '        height = 0.1,' \
+    '        mass = 10' \
+    '    }' \
+    'end' \
+    '' \
+    'return {' \
+    '    getOutletPositions = getOutletPositions,' \
+    '    getInletPositions = getInletPositions,' \
+    '    getStackPositions = getStackPositions,' \
+    '    getScaleInfo = getScaleInfo' \
+    '}' \
+    > /opt/coppelia/models/efficientconveyor_customization-3.lua
 
-function getInletPositions()
-    return {}
-end
-
-function getStackPositions()
-    return {}
-end
-
-function getScaleInfo()
-    return {
-        width = 0.5,
-        depth = 0.5,
-        height = 0.1,
-        mass = 10
-    }
-end
-
-return {
-    getOutletPositions = getOutletPositions,
-    getInletPositions = getInletPositions,
-    getStackPositions = getStackPositions,
-    getScaleInfo = getScaleInfo
-}
-EOF
+# Verify the file was created
+RUN echo "✓ EfficientConveyor customization model created" && \
+    ls -la /opt/coppelia/models/
 
 # ===============================
 # Make entrypoint executable
