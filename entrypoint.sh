@@ -19,59 +19,24 @@ fi
 FILE_SIZE=$(stat -c%s /app/pick_and_place.ttt 2>/dev/null || echo "unknown")
 echo "✓ Scene file found: /app/pick_and_place.ttt (size: $FILE_SIZE bytes)"
 
-# Try to detect if file is valid (should start with CoppeliaSim markers)
-if command -v file &> /dev/null; then
-    echo "✓ File format detected: $(file -b /app/pick_and_place.ttt)"
-else
-    echo "✓ File found (file utility not available for format check)"
-fi
-
-# Check CoppeliaSim version and plugins
-echo "=== CoppeliaSim Diagnostics ==="
-echo "Version: $(/opt/coppelia/coppeliaSim --version 2>&1 || echo 'Version info not available')"
-echo "Available plugins:"
-ls -la /opt/coppelia/ | grep -E "plugin|remote" || echo "No plugins found"
-
-# Check for ZMQ plugin specifically
-if [ -f "/opt/coppelia/libsimExtZMQRemoteApi.so" ]; then
-    echo "✓ ZMQ Remote API plugin found"
-else
-    echo "⚠️  ZMQ Remote API plugin not found - checking elsewhere"
-    find /opt/coppelia -name "*ZMQ*" -o -name "*zmq*" 2>/dev/null | head -10 || echo "No ZMQ files found"
-fi
-
-echo "=== Starting CoppeliaSim (headless mode) with full logging ==="
+echo "=== Starting CoppeliaSim (headless mode) ==="
 
 # Clear old log
 > coppeliasim.log
 
-# Start CoppeliaSim with verbose output and capture logs
+# Start CoppeliaSim with scene file properly loaded
+# The -f flag is used to specify the scene file
 xvfb-run --auto-servernum --server-args='-screen 0 1024x768x24' \
   /opt/coppelia/coppeliaSim \
     -h \
     -GzmqRemoteApi.rpcPort=23000 \
     -GzmqRemoteApi.cntPort=23001 \
-    -Gverbose=1 \
-    /app/pick_and_place.ttt > coppeliasim.log 2>&1 &
+    -f /app/pick_and_place.ttt > coppeliasim.log 2>&1 &
 
 COPPELIA_PID=$!
 
 echo "CoppeliaSim launched (PID: $COPPELIA_PID)"
 echo "Log redirected to coppeliasim.log"
-
-# Monitor process in background
-(
-    sleep 10
-    if kill -0 $COPPELIA_PID 2>/dev/null; then
-        echo "✓ Process still alive after 10s initial check"
-    else
-        echo "❌ Process died within first 10 seconds!"
-        echo "=== Exit code: $(wait $COPPELIA_PID 2>/dev/null; echo $?)"
-        echo "=== Full log content ==="
-        cat coppeliasim.log
-        exit 1
-    fi
-) &
 
 echo "=== Waiting for ZMQ Remote API server to be ready ==="
 
@@ -79,49 +44,23 @@ TIMEOUT=120
 ELAPSED=0
 PORT_FOUND=0
 
-# Use the same connection test as pytest does (actually try to connect)
 while [ $ELAPSED -lt $TIMEOUT ]; do
     if python3 -c "import socket; socket.create_connection(('localhost', 23000), timeout=1)" 2>/dev/null; then
         echo "✓ Port 23000 is accepting connections!"
         
-        # Additional check: try ZMQ handshake
-        echo "  Testing ZMQ API handshake..."
-        if python3 -c "
-import zmq
-import json
-context = zmq.Context()
-socket = context.socket(zmq.REQ)
-socket.connect('tcp://localhost:23000')
-# Try to get version info
-socket.send_json({'func': 'simGetStringParam', 'args': [0]})  # sim_stringparam_application_version
-if socket.poll(3000):
-    response = socket.recv_json()
-    print(f'    ✓ ZMQ API responding: {response}')
-    exit(0)
-else:
-    print('    ❌ ZMQ API not responding')
-    exit(1)
-" 2>&1; then
-            echo "  ✓ ZMQ API fully operational!"
-        else
-            echo "  ⚠️  Port open but ZMQ API not responding - server may be stuck"
-        fi
+        # Wait a bit for the server to fully initialize
+        echo "  Waiting 5s for server to fully stabilize..."
+        sleep 5
         
-        echo "  Waiting 15s for server to fully stabilize..."
-        sleep 15
-        
-        # Check if process is still alive after waiting
+        # Check if process is still alive
         if ! kill -0 $COPPELIA_PID 2>/dev/null; then
-            echo "❌ CoppeliaSim process died during stabilization period!"
-            echo "=== Exit code: $(wait $COPPELIA_PID 2>/dev/null; echo $?)"
-            echo "=== Last 50 lines of log ==="
-            tail -50 coppeliasim.log
-            echo "=== Full log ==="
+            echo "❌ CoppeliaSim process died after port opened!"
+            echo "=== CoppeliaSim Log ==="
             cat coppeliasim.log
             exit 1
         fi
         
-        echo "  CoppeliaSim ZMQ server should now be fully ready for all tests"
+        echo "  CoppeliaSim ZMQ server is ready"
         PORT_FOUND=1
         break
     fi
@@ -133,8 +72,7 @@ else:
     # Check if process is still alive
     if ! kill -0 $COPPELIA_PID 2>/dev/null; then
         echo "ERROR: CoppeliaSim process exited unexpectedly!"
-        echo "=== Exit code: $(wait $COPPELIA_PID 2>/dev/null; echo $?)"
-        echo "=== CoppeliaSim Log (full) ==="
+        echo "=== CoppeliaSim Log ==="
         cat coppeliasim.log
         exit 1
     fi
@@ -142,12 +80,8 @@ done
 
 if [ $PORT_FOUND -eq 0 ]; then
     echo "ERROR: Port 23000 never opened after ${TIMEOUT}s"
-    echo "=== CoppeliaSim Log (full) ==="
+    echo "=== CoppeliaSim Log ==="
     cat coppeliasim.log
-    echo ""
-    echo "=== Checking if process is still running ==="
-    ps aux | grep coppeliaSim | grep -v grep || echo "CoppeliaSim process not found - it crashed!"
-    kill -TERM $COPPELIA_PID 2>/dev/null || true
     exit 1
 fi
 
@@ -186,9 +120,6 @@ if kill -0 $COPPELIA_PID 2>/dev/null; then
 fi
 
 echo "=== Test finished with exit code $TEST_EXIT_CODE ==="
-echo "=== Last 20 lines of coppeliasim.log ==="
 tail -n 20 coppeliasim.log
-echo "=== First 20 lines of coppeliasim.log ==="
-head -n 20 coppeliasim.log
 
 exit $TEST_EXIT_CODE
