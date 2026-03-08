@@ -31,7 +31,7 @@ RUN apt-get update && apt-get install -y \
    && rm -rf /var/lib/apt/lists/*
 
 # ===============================
-# Install CoppeliaSim
+# Install CoppeliaSim (V4.7.0)
 # ===============================
 RUN wget https://downloads.coppeliarobotics.com/V4_7_0_rev4/CoppeliaSim_Edu_V4_7_0_rev4_Ubuntu22_04.tar.xz \
    && tar -xf CoppeliaSim_Edu_V4_7_0_rev4_Ubuntu22_04.tar.xz \
@@ -61,45 +61,49 @@ COPY . .
 # ===============================
 # Setup models and dependencies
 # ===============================
-# Create models directory and add missing EfficientConveyor customization
 RUN mkdir -p /opt/coppelia/models && \
-   mkdir -p /app/models && \
-   # Create the missing EfficientConveyor customization model file
-   cat > /opt/coppelia/models/efficientconveyor_customization-3.lua << 'EOF'
+    mkdir -p /app/models && \
+    echo "Creating EfficientConveyor customization model..." && \
+    cat > /opt/coppelia/models/efficientconveyor_customization-3.lua << 'EOF'
 -- EfficientConveyor Customization Model (V3)
 -- Auto-generated for Docker compatibility
 
 function getOutletPositions()
-return {}
+    return {}
 end
 
 function getInletPositions()
-return {}
+    return {}
 end
 
 function getStackPositions()
-return {}
+    return {}
 end
 
 function getScaleInfo()
-return {
-width = 0.5,
-depth = 0.5,
-height = 0.1,
-mass = 10
-}
+    return {
+        width = 0.5,
+        depth = 0.5,
+        height = 0.1,
+        mass = 10
+    }
 end
 
 return {
-getOutletPositions = getOutletPositions,
-getInletPositions = getInletPositions,
-getStackPositions = getStackPositions,
-getScaleInfo = getScaleInfo
+    getOutletPositions = getOutletPositions,
+    getInletPositions = getInletPositions,
+    getStackPositions = getStackPositions,
+    getScaleInfo = getScaleInfo
 }
 EOF
-echo "✓ EfficientConveyor customization model created"
+
+# ===============================
+# Make entrypoint executable
 # ===============================
 COPY entrypoint.sh .
 RUN chmod +x entrypoint.sh
 
+# ===============================
+# Default command
+# ===============================
 CMD ["./entrypoint.sh"]
