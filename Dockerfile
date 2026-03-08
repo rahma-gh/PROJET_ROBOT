@@ -59,7 +59,45 @@ RUN pip3 install --no-cache-dir -r requirements.txt
 COPY . .
 
 # ===============================
-# Entrypoint
+# Setup models and dependencies
+# ===============================
+# Create models directory and add missing EfficientConveyor customization
+RUN mkdir -p /opt/coppelia/models && \
+   mkdir -p /app/models && \
+   # Create the missing EfficientConveyor customization model file
+   cat > /opt/coppelia/models/efficientconveyor_customization-3.lua << 'EOF'
+-- EfficientConveyor Customization Model (V3)
+-- Auto-generated for Docker compatibility
+
+function getOutletPositions()
+return {}
+end
+
+function getInletPositions()
+return {}
+end
+
+function getStackPositions()
+return {}
+end
+
+function getScaleInfo()
+return {
+width = 0.5,
+depth = 0.5,
+height = 0.1,
+mass = 10
+}
+end
+
+return {
+getOutletPositions = getOutletPositions,
+getInletPositions = getInletPositions,
+getStackPositions = getStackPositions,
+getScaleInfo = getScaleInfo
+}
+EOF
+echo "✓ EfficientConveyor customization model created"
 # ===============================
 COPY entrypoint.sh .
 RUN chmod +x entrypoint.sh
