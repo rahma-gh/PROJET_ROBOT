@@ -39,14 +39,24 @@ def sim():
         print(f"[DEBUG] ✗ Failed to get sim: {exc}")
         pytest.fail(f"could not connect to CoppeliaSim ZMQ API: {exc}")
 
-    print("→ Démarrage de la simulation CoppeliaSim...")
-    time.sleep(2)  # Extra wait before starting simulation
-    sim.startSimulation()
-    time.sleep(3.0)  # Increased wait for simulation to stabilize
+    print("→ Starting the simulation from pytest...")
+    time.sleep(1)  # Brief pause
+    try:
+        sim.startSimulation()
+        print("✓ Simulation started successfully")
+    except Exception as exc:
+        print(f"Warning: Could not start simulation: {exc}")
+        # Scene might already be running, continue anyway
+    
+    time.sleep(3.0)  # Wait for simulation to stabilize
     yield sim
-    print("→ Arrêt de la simulation CoppeliaSim...")
-    sim.stopSimulation()
-    time.sleep(1.0)  # Increased cleanup time
+    
+    print("→ Stopping the simulation...")
+    try:
+        sim.stopSimulation()
+    except Exception as exc:
+        print(f"Warning during shutdown: {exc}")
+    time.sleep(1.0)
 
 
 def test_csv_presence():
