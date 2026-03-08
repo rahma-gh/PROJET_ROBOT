@@ -7,10 +7,20 @@ export XDG_RUNTIME_DIR=/tmp/runtime-root
 mkdir -p "$XDG_RUNTIME_DIR"
 chmod 0700 "$XDG_RUNTIME_DIR"
 
+# Verify scene file exists
+if [ ! -f "/app/pick_and_place.ttt" ]; then
+    echo "ERROR: Scene file /app/pick_and_place.ttt not found!"
+    echo "Files in /app:"
+    ls -lah /app/ | grep -E "\.ttt|\.lua"
+    exit 1
+fi
+
+echo "✓ Scene file found: /app/pick_and_place.ttt ($(stat -f%z /app/pick_and_place.ttt 2>/dev/null || echo 'unknown size') bytes)"
+
 echo "=== Starting CoppeliaSim (headless mode) ==="
 
 # Start CoppeliaSim with ZMQ ports configured
-# Use -c flag to execute Lua command that starts the simulation
+# Using V4.7.0 with true headless mode (-H) and auto-start simulation (-c flag)
 xvfb-run --auto-servernum --server-args='-screen 0 1024x768x24' \
   /opt/coppelia/coppeliaSim \
     -H \
