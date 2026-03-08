@@ -20,10 +20,10 @@ FILE_SIZE=$(stat -c%s /app/pick_and_place.ttt 2>/dev/null || echo "unknown")
 echo "✓ Scene file found: /app/pick_and_place.ttt (size: $FILE_SIZE bytes)"
 
 # Try to detect if file is valid (should start with CoppeliaSim markers)
-if file /app/pick_and_place.ttt | grep -q "XML\|data"; then
+if command -v file &> /dev/null; then
     echo "✓ File format detected: $(file -b /app/pick_and_place.ttt)"
 else
-    echo "WARNING: File format may be unexpected: $(file -b /app/pick_and_place.ttt)"
+    echo "✓ File found (file utility not available for format check)"
 fi
 
 echo "=== Starting CoppeliaSim (headless mode) ==="
@@ -47,6 +47,7 @@ echo "=== Waiting for ZMQ Remote API server to be ready ==="
 
 TIMEOUT=120
 ELAPSED=0
+PORT_FOUND=0
 
 # Use the same connection test as pytest does (actually try to connect)
 while [ $ELAPSED -lt $TIMEOUT ]; do
@@ -56,6 +57,16 @@ while [ $ELAPSED -lt $TIMEOUT ]; do
         echo "  Waiting 15s for server to fully stabilize..."
         sleep 15
         echo "  CoppeliaSim ZMQ server should now be fully ready for all tests"
+        PORT_FOUND=1
+        break
+    fi
+    
+    sleep 2
+    ELAPSED=$((ELAPSED + 2))
+    echo "  waiting for port... (${ELAPSED}s / ${TIMEOUT}s)"
+    
+    # Check if process is still alive
+    if ! kill -0 $COPPELIA_PID 2>/dev/null; then
         echo "ERROR: CoppeliaSim process exited unexpectedly!"
         echo "=== CoppeliaSim Log ==="
         cat coppeliasim.log
@@ -63,7 +74,7 @@ while [ $ELAPSED -lt $TIMEOUT ]; do
     fi
 done
 
-if [ $ELAPSED -ge $TIMEOUT ]; then
+if [ $PORT_FOUND -eq 0 ]; then
     echo "ERROR: Port 23000 never opened after ${TIMEOUT}s"
     echo "=== CoppeliaSim Log (last 100 lines) ==="
     tail -n 100 coppeliasim.log
