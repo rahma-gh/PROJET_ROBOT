@@ -24,15 +24,15 @@ echo "=== Starting CoppeliaSim (headless mode) ==="
 # Clear old log
 > coppeliasim.log
 
-# Start CoppeliaSim with scene file and keep it running
-# The -c flag executes a script command to keep the sim alive
+# Start CoppeliaSim with scene file and proper initialization
+# First load the scene, then start the ZMQ server, then keep alive
 xvfb-run --auto-servernum --server-args='-screen 0 1024x768x24' \
   /opt/coppelia/coppeliaSim \
     -h \
     -GzmqRemoteApi.rpcPort=23000 \
     -GzmqRemoteApi.cntPort=23001 \
     -f /app/pick_and_place.ttt \
-    -c "while true do sim.wait(1) end" > coppeliasim.log 2>&1 &
+    -c "simZMQRemoteApi.start(23000); while true do sim.wait(1) end" > coppeliasim.log 2>&1 &
 
 COPPELIA_PID=$!
 
@@ -44,10 +44,11 @@ echo "=== Waiting for ZMQ Remote API server to be ready ==="
 TIMEOUT=120
 ELAPSED=0
 PORT_FOUND=0
+ZMQ_READY=0
 
 while [ $ELAPSED -lt $TIMEOUT ]; do
     if python3 -c "import socket; socket.create_connection(('localhost', 23000), timeout=1)" 2>/dev/null; then
-        echo "✓ Port 23000 is accepting connections!"
+        echo "✓ Port 23000 is accepting connections at ${ELAPSED}s!"
         
         # Wait a bit for the server to fully initialize
         echo "  Waiting 5s for server to fully stabilize..."
@@ -67,34 +68,35 @@ while [ $ELAPSED -lt $TIMEOUT ]; do
 import zmq
 import json
 import sys
+import time
+
 try:
     context = zmq.Context()
     socket = context.socket(zmq.REQ)
     socket.connect('tcp://localhost:23000')
+    socket.setsockopt(zmq.RCVTIMEO, 5000)
+    socket.setsockopt(zmq.SNDTIMEO, 5000)
+    
     # Try to get version info
     socket.send_json({'func': 'simGetStringParam', 'args': [0]})  # sim_stringparam_application_version
-    if socket.poll(3000):
-        response = socket.recv_json()
-        print(f'    ✓ ZMQ API responding: {response}')
-        sys.exit(0)
-    else:
-        print('    ❌ ZMQ API not responding (timeout)')
-        sys.exit(1)
+    response = socket.recv_json()
+    print(f'    ✓ ZMQ API responding: {response}')
+    sys.exit(0)
+except zmq.ZMQError as e:
+    print(f'    ❌ ZMQ error: {e}')
+    sys.exit(1)
 except Exception as e:
-    print(f'    ❌ ZMQ API test failed: {e}')
+    print(f'    ❌ Error: {e}')
     sys.exit(1)
 " 2>&1; then
             echo "  ✓ ZMQ API fully operational!"
+            ZMQ_READY=1
+            break
         else
             echo "  ⚠️  ZMQ API test failed - server may not be fully ready"
-            echo "  Checking log for errors..."
-            tail -20 coppeliasim.log
-            # Don't exit, but warn - maybe the test can still work
+            echo "  Checking log for scene loading errors..."
+            tail -20 coppeliasim.log | grep -E "error|warning|load|scene" || true
         fi
-        
-        echo "  CoppeliaSim ZMQ server is ready"
-        PORT_FOUND=1
-        break
     fi
     
     sleep 2
@@ -103,7 +105,7 @@ except Exception as e:
     
     # Check if process is still alive
     if ! kill -0 $COPPELIA_PID 2>/dev/null; then
-        echo "ERROR: CoppeliaSim process exited unexpectedly!"
+        echo "ERROR: CoppeliaSim process exited unexpectedly at ${ELAPSED}s!"
         echo "=== Exit code: $(wait $COPPELIA_PID 2>/dev/null; echo $?)"
         echo "=== Full CoppeliaSim Log ==="
         cat coppeliasim.log
@@ -111,8 +113,8 @@ except Exception as e:
     fi
 done
 
-if [ $PORT_FOUND -eq 0 ]; then
-    echo "ERROR: Port 23000 never opened after ${TIMEOUT}s"
+if [ $PORT_FOUND -eq 0 ] && [ $ZMQ_READY -eq 0 ]; then
+    echo "ERROR: Port 23000 never opened or ZMQ never responded after ${TIMEOUT}s"
     echo "=== Full CoppeliaSim Log ==="
     cat coppeliasim.log
     echo ""
@@ -122,10 +124,12 @@ if [ $PORT_FOUND -eq 0 ]; then
 fi
 
 echo "=== CoppeliaSim is ready, Tests can now run ==="
-echo "=== Current log status ==="
+echo "=== Current log status (looking for scene loading) ==="
 if [ -f coppeliasim.log ]; then
-    echo "=== Last 10 lines of log ==="
-    tail -10 coppeliasim.log
+    echo "=== Lines containing 'scene' or 'load' ==="
+    grep -i "scene\|load" coppeliasim.log | tail -20 || echo "No scene loading messages found"
+    echo "=== Last 15 lines of log ==="
+    tail -15 coppeliasim.log
 else
     echo "Log file not found"
 fi
@@ -145,13 +149,14 @@ else
     TEST_PATH="."
 fi
 
-# Run pytest with verbose output
+# Run pytest with verbose output and shorter timeout for faster feedback
 pytest $TEST_PATH \
     --html=/app/output/report.html \
     --self-contained-html \
     --timeout=180 \
     --timeout-method=thread \
-    -vv
+    -vv \
+    --maxfail=1
 
 TEST_EXIT_CODE=$?
 
@@ -169,7 +174,7 @@ fi
 
 echo "=== Test finished with exit code $TEST_EXIT_CODE ==="
 
-# Always show the log at the end for debugging
+# Always show the full log at the end for debugging
 echo "=== Complete CoppeliaSim Log ==="
 if [ -f coppeliasim.log ]; then
     cat coppeliasim.log
