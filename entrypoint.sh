@@ -23,14 +23,14 @@ echo "=== Starting CoppeliaSim (headless mode) ==="
 # Clear log
 > coppeliasim.log
 
-# Start simulator
 xvfb-run --auto-servernum --server-args='-screen 0 1024x768x24' \
 /opt/coppelia/coppeliaSim \
     -h \
-    -s0 \
+    -s \
+    -q \
     -GzmqRemoteApi.rpcPort=23000 \
     -GzmqRemoteApi.cntPort=23001 \
-    /app/pick_and_place.ttt \
+    -f /app/pick_and_place.ttt \
     > coppeliasim.log 2>&1 &
 
 COPPELIA_PID=$!
