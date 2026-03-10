@@ -26,7 +26,8 @@ echo "=== Starting CoppeliaSim (headless mode) ==="
 xvfb-run --auto-servernum --server-args='-screen 0 1024x768x24' \
 /opt/coppelia/coppeliaSim \
     -h \
-    -s999999999 \
+    -s99999999 \
+    -q \
     -GzmqRemoteApi.rpcPort=23000 \
     -GzmqRemoteApi.cntPort=23001 \
     -f /app/pick_and_place.ttt \
