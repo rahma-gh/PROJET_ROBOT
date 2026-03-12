@@ -7,8 +7,8 @@ export XDG_RUNTIME_DIR=/tmp/runtime-root
 mkdir -p "$XDG_RUNTIME_DIR"
 chmod 0700 "$XDG_RUNTIME_DIR"
 
-# Use a built-in CoppeliaSim scene instead of your custom scene
-BUILTIN_SCENE="/opt/coppelia/scenes/mobility/mobility.ttt"
+# Use a built-in CoppeliaSim scene that exists
+BUILTIN_SCENE="/opt/coppelia/scenes/pickAndPlaceDemo.ttt"
 
 # Verify built-in scene exists
 if [ ! -f "$BUILTIN_SCENE" ]; then
@@ -19,7 +19,7 @@ if [ ! -f "$BUILTIN_SCENE" ]; then
 fi
 
 FILE_SIZE=$(stat -c%s "$BUILTIN_SCENE" 2>/dev/null || echo "unknown")
-echo "✓ Using built-in scene: mobility.ttt (size: $FILE_SIZE bytes)"
+echo "✓ Using built-in scene: pickAndPlaceDemo.ttt (size: $FILE_SIZE bytes)"
 
 echo "=== Starting CoppeliaSim (headless mode) with built-in scene ==="
 
@@ -117,47 +117,54 @@ echo "=== Simulator ready with built-in scene ==="
 echo "Last simulator log lines:"
 tail -15 coppeliasim.log
 
-# Create a simple test script to verify the scene
-cat > /tmp/test_builtin_scene.py << 'EOF'
+# Create a simple test script to verify the pick and place scene
+cat > /tmp/test_pickandplace.py << 'EOF'
 import time
 from coppeliasim_zmqremoteapi_client import RemoteAPIClient
 
-print("Testing connection to built-in scene...")
+print("Testing connection to pickAndPlaceDemo scene...")
 client = RemoteAPIClient()
 sim = client.require('sim')
 
 # Start simulation
 print("Starting simulation...")
 sim.startSimulation()
-time.sleep(2)
+time.sleep(3)
 
-# List some objects in the mobility scene
-print("Objects in mobility scene:")
+# List objects in the scene
+print("Objects in pick and place scene:")
 objects = sim.getObjects(-1, 0)
-for i, obj in enumerate(objects[:10]):  # First 10 objects
+object_names = []
+for i, obj in enumerate(objects[:20]):  # First 20 objects
     name = sim.getObjectAlias(obj, 1)
-    print(f"  {i+1}. {name}")
+    object_names.append(name)
+    print(f"  {i+1}. {name} (handle: {obj})")
 
-# Try to find a typical mobility scene object
-try:
-    # Look for a vehicle or common object in mobility scene
-    all_objects = [sim.getObjectAlias(obj, 1) for obj in objects]
-    print(f"\nTotal objects in scene: {len(objects)}")
-    
-    # Check if scene loaded properly
-    if len(objects) > 5:
-        print("✓ Scene loaded successfully with multiple objects")
-    else:
-        print("⚠️ Scene might be empty")
-except Exception as e:
-    print(f"Error inspecting scene: {e}")
+# Look for specific objects that might be in a pick and place scene
+robot_found = False
+for name in object_names:
+    if "UR" in name or "robot" in name.lower() or "arm" in name.lower():
+        print(f"✓ Found robot-related object: {name}")
+        robot_found = True
+
+if robot_found:
+    print("✓ Scene contains robot objects")
+else:
+    print("⚠️ No robot objects found in first 20 objects")
+
+print(f"\nTotal objects in scene: {len(objects)}")
+
+if len(objects) > 10:
+    print("✓ Scene loaded successfully with multiple objects")
+else:
+    print("⚠️ Scene might be empty or not loaded properly")
 
 sim.stopSimulation()
 print("Test completed")
 EOF
 
-echo "=== Testing built-in scene ==="
-python3 /tmp/test_builtin_scene.py
+echo "=== Testing built-in pick and place scene ==="
+python3 /tmp/test_pickandplace.py
 TEST_EXIT_CODE=$?
 
 echo "=== Stopping simulator ==="
@@ -172,10 +179,10 @@ echo "=== Full CoppeliaSim log ==="
 cat coppeliasim.log
 
 if [ $TEST_EXIT_CODE -eq 0 ]; then
-    echo "✓ SUCCESS: Built-in scene works in your environment!"
-    echo "This means your Docker environment is good, but your custom scene has issues."
+    echo "✓ SUCCESS: Built-in pick and place scene works in your environment!"
+    echo "This means your Docker environment is good, but your custom scene (pick_and_place.ttt) has issues."
 else
-    echo "❌ FAILED: Even built-in scene crashes in your environment"
+    echo "❌ FAILED: Even built-in pick and place scene crashes in your environment"
     echo "This means there's an issue with your Docker environment setup."
 fi
 
